@@ -79,6 +79,7 @@ export default function App() {
   const [securityTab, setSecurityTab] = useState<"overview" | "programs" | "startup" | "network" | "tasks" | "services">("overview");
   const [hardwareOpen, setHardwareOpen] = useState(false);
   const [hardwareTab, setHardwareTab] = useState<"cpu" | "gpu" | "power" | "disks" | "network" | "apps">("cpu");
+  const [processQuery, setProcessQuery] = useState("");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -211,6 +212,14 @@ export default function App() {
   const usageSince = Date.now() - usagePeriod * 24 * 60 * 60 * 1000;
   const visibleUsage = usage?.filter(record => record.lastSeenAt >= usageSince && record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
   const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
+  const normalizedProcessQuery = processQuery.trim().toLowerCase();
+  const visibleApplications = snap?.applications.filter(application => {
+    if (!normalizedProcessQuery) return true;
+    return application.name.toLowerCase().includes(normalizedProcessQuery)
+      || String(application.rootPid).includes(normalizedProcessQuery)
+      || application.members.some(process => process.name.toLowerCase().includes(normalizedProcessQuery)
+        || String(process.pid).includes(normalizedProcessQuery));
+  }).slice(0, 8) ?? [];
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
@@ -256,7 +265,8 @@ export default function App() {
 
     <div className="columns">
       <section className="card"><div className="section-title"><h3>正在盯着</h3><span>应用总占用 · 点击展开子进程</span></div>
-        <div className="process-list">{snap?.applications.slice(0, 8).map(app => <div className="app-group" key={`${app.rootPid}-${app.name}`}>
+        <div className="process-search-wrap"><span aria-hidden="true">⌕</span><input className="process-search" value={processQuery} onChange={event => setProcessQuery(event.target.value)} placeholder="搜索应用、进程或 PID" aria-label="搜索应用、进程或 PID" />{processQuery && <button onClick={() => setProcessQuery("")} aria-label="清除进程搜索">×</button>}</div>
+        <div className="process-list">{visibleApplications.map(app => <div className="app-group" key={`${app.rootPid}-${app.name}`}>
           <button className="process application" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)}>
             <span className="process-icon">{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</span><span className="process-name"><b>{app.name}</b><small>{app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
             <span><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
@@ -264,7 +274,7 @@ export default function App() {
           {expandedApp === app.rootPid && <div className="child-processes">{app.members.map(process => <button className="process child" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
             <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""} · {process.threadCount ?? 0} 线程</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
           </button>)}</div>}
-        </div>)}{!snap?.applications.length && <p className="empty">还没有采集到应用数据。</p>}</div>
+        </div>)}{!visibleApplications.length && <p className="empty">{normalizedProcessQuery ? "没有找到匹配的应用或进程。" : "还没有采集到应用数据。"}</p>}</div>
       </section>
 
       <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><span>最近事件</span></div>
