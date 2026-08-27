@@ -99,6 +99,10 @@ pub struct HistorySummary {
     pub points: Vec<MetricPoint>,
     pub baseline_cpu_percent: f32,
     pub baseline_memory_percent: f32,
+    pub peak_cpu_percent: f32,
+    pub peak_memory_percent: f32,
+    pub average_disk_bps: u64,
+    pub average_network_bps: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,6 +144,32 @@ pub struct SecurityReport {
     pub programs: Vec<ProgramRisk>,
     pub startup_entries: Vec<StartupEntry>,
     pub summary: String,
+    pub security_score: u8,
+    pub medium_risk_count: usize,
+    pub low_risk_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUsageSummary {
+    pub period_days: u32,
+    pub application_count: usize,
+    pub session_count: usize,
+    pub total_runtime_seconds: u64,
+    pub total_foreground_seconds: u64,
+    pub total_background_seconds: u64,
+    pub longest_used_app: Option<String>,
+    pub top_apps: Vec<AppUsageAggregate>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUsageAggregate {
+    pub name: String,
+    pub session_count: usize,
+    pub runtime_seconds: u64,
+    pub foreground_seconds: u64,
+    pub background_seconds: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

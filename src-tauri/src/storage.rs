@@ -1,5 +1,6 @@
 use crate::types::{
-    AppUsageRecord, HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent, UserSettings,
+    AppUsageAggregate, AppUsageRecord, AppUsageSummary, HistorySummary, MetricPoint,
+    SystemSnapshot, TimelineEvent, UserSettings,
 };
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf};
@@ -187,10 +188,19 @@ impl Storage {
             [since],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        let peak_cpu_percent = points.iter().map(|point| point.cpu_percent).fold(0.0, f32::max);
+        let peak_memory_percent = points.iter().map(|point| point.memory_percent).fold(0.0, f32::max);
+        let sample_count = points.len().max(1) as u64;
+        let average_disk_bps = points.iter().map(|point| point.disk_bps).sum::<u64>() / sample_count;
+        let average_network_bps = points.iter().map(|point| point.network_bps).sum::<u64>() / sample_count;
         Ok(HistorySummary {
             points,
             baseline_cpu_percent: cpu,
             baseline_memory_percent: memory,
+            peak_cpu_percent,
+            peak_memory_percent,
+            average_disk_bps,
+            average_network_bps,
         })
     }
 
@@ -293,6 +303,41 @@ impl Storage {
             })?
             .collect();
         records
+    }
+
+    pub fn app_usage_summary(&self, period_days: u32) -> rusqlite::Result<AppUsageSummary> {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+            - period_days as u64 * 24 * 60 * 60 * 1000;
+        let mut statement = self.connection.prepare(
+            "SELECT name, COUNT(*), SUM(runtime_seconds), SUM(foreground_seconds),
+                    SUM(background_seconds)
+             FROM app_sessions WHERE last_seen_at >= ?1
+             GROUP BY LOWER(name) ORDER BY SUM(foreground_seconds) DESC",
+        )?;
+        let top_apps: Vec<AppUsageAggregate> = statement
+            .query_map([since], |row| {
+                Ok(AppUsageAggregate {
+                    name: row.get(0)?,
+                    session_count: row.get(1)?,
+                    runtime_seconds: row.get(2)?,
+                    foreground_seconds: row.get(3)?,
+                    background_seconds: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(AppUsageSummary {
+            period_days,
+            application_count: top_apps.len(),
+            session_count: top_apps.iter().map(|app| app.session_count).sum(),
+            total_runtime_seconds: top_apps.iter().map(|app| app.runtime_seconds).sum(),
+            total_foreground_seconds: top_apps.iter().map(|app| app.foreground_seconds).sum(),
+            total_background_seconds: top_apps.iter().map(|app| app.background_seconds).sum(),
+            longest_used_app: top_apps.first().map(|app| app.name.clone()),
+            top_apps: top_apps.into_iter().take(8).collect(),
+        })
     }
 }
 

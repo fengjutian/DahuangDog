@@ -418,6 +418,14 @@ impl Monitor {
             .map_err(|error| format!("读取应用使用记录失败：{error}"))
     }
 
+    pub fn app_usage_summary(&self, period_days: u32) -> Result<crate::types::AppUsageSummary, String> {
+        self.storage
+            .as_ref()
+            .ok_or("本地记忆暂时不可用".to_string())?
+            .app_usage_summary(period_days.clamp(1, 90))
+            .map_err(|error| format!("读取应用使用分析失败：{error}"))
+    }
+
     fn update_detector(&mut self, snapshot: &SystemSnapshot) {
         let required_samples = required_high_samples(self.sampling_interval_seconds());
         self.high_cpu_samples = if snapshot.cpu_percent >= self.settings.cpu_threshold {

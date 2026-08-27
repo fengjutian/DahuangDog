@@ -201,6 +201,14 @@ pub fn scan_security() -> Result<SecurityReport, String> {
             .iter()
             .filter(|entry| entry.risk_level == "medium")
             .count();
+    let medium_risk_count = notable;
+    let low_risk_count = programs
+        .iter()
+        .filter(|program| program.risk_level == "low")
+        .count();
+    let security_score = 100usize
+        .saturating_sub(medium_risk_count * 12)
+        .saturating_sub(low_risk_count.min(10) * 2) as u8;
     Ok(SecurityReport {
         scanned_at: now_ms(),
         scanned_programs: programs.len(),
@@ -216,6 +224,9 @@ pub fn scan_security() -> Result<SecurityReport, String> {
         } else {
             format!("发现 {notable} 个值得进一步确认的项目。")
         },
+        security_score,
+        medium_risk_count,
+        low_risk_count,
     })
 }
 
