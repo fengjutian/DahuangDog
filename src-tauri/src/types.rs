@@ -311,3 +311,46 @@ pub struct ActionResult {
     pub success: bool,
     pub message: String,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationMetricPoint {
+    pub captured_at: u64,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub network_bps: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationHistory {
+    pub name: String,
+    pub range_minutes: u32,
+    pub points: Vec<ApplicationMetricPoint>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlertRecord {
+    pub id: String,
+    pub kind: String,
+    pub severity: String,
+    pub title: String,
+    pub message: String,
+    pub first_seen_at: u64,
+    pub updated_at: u64,
+    pub status: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodicPattern {
+    pub hour: u8,
+    pub sample_count: u64,
+    pub average_cpu_percent: f32,
+    pub average_memory_percent: f32,
+    pub signal: String,
+}

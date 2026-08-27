@@ -222,3 +222,8 @@ export interface ActionResult {
   success: boolean;
   message: string;
 }
+
+export interface ApplicationMetricPoint { capturedAt: number; cpuPercent: number; memoryBytes: number; diskReadBps: number; diskWriteBps: number; networkBps: number | null; }
+export interface ApplicationHistory { name: string; rangeMinutes: number; points: ApplicationMetricPoint[]; }
+export interface AlertRecord { id: string; kind: string; severity: "warning" | "critical"; title: string; message: string; firstSeenAt: number; updatedAt: number; status: "unread" | "acknowledged" | "ignored" | "resolved"; note: string; }
+export interface PeriodicPattern { hour: number; sampleCount: number; averageCpuPercent: number; averageMemoryPercent: number; signal: string; }

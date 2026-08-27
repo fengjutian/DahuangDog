@@ -1,5 +1,6 @@
 use crate::types::{
-    AppUsageAggregate, AppUsageRecord, AppUsageSummary, DailyUsage, HistorySummary, MetricPoint,
+    AlertRecord, AppUsageAggregate, AppUsageRecord, AppUsageSummary, ApplicationHistory,
+    ApplicationMetricPoint, DailyUsage, Finding, HistorySummary, MetricPoint, PeriodicPattern,
     SystemSnapshot, TimelineEvent, UserSettings,
 };
 use rusqlite::{params, Connection};
@@ -72,7 +73,31 @@ impl Storage {
                 background_seconds INTEGER NOT NULL,
                 member_peak INTEGER NOT NULL,
                 is_running INTEGER NOT NULL
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS application_snapshots (
+                id INTEGER PRIMARY KEY,
+                captured_at INTEGER NOT NULL,
+                app_name TEXT NOT NULL,
+                root_pid INTEGER NOT NULL,
+                cpu_percent REAL NOT NULL,
+                memory_bytes INTEGER NOT NULL,
+                disk_read_bps INTEGER NOT NULL,
+                disk_write_bps INTEGER NOT NULL,
+                network_bps INTEGER
+             );
+             CREATE INDEX IF NOT EXISTS idx_app_snapshots_name_time ON application_snapshots(app_name, captured_at);
+             CREATE TABLE IF NOT EXISTS alerts (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                first_seen_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'unread',
+                note TEXT NOT NULL DEFAULT ''
+             );
+             CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(updated_at DESC);",
             )
             .map_err(|error| format!("无法初始化本地记忆：{error}"))?;
         Ok(Self { connection })
@@ -101,13 +126,88 @@ impl Storage {
                 snapshot.network_send_bps
             ],
         )?;
+        for application in &snapshot.applications {
+            self.connection.execute(
+                "INSERT INTO application_snapshots (
+                    captured_at, app_name, root_pid, cpu_percent, memory_bytes,
+                    disk_read_bps, disk_write_bps, network_bps
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![snapshot.captured_at, application.name, application.root_pid,
+                    application.cpu_percent, application.memory_bytes, application.disk_read_bps,
+                    application.disk_write_bps, application.network_bps],
+            )?;
+        }
         self.connection.execute(
             "DELETE FROM system_snapshots WHERE captured_at < ?1",
             params![snapshot
                 .captured_at
                 .saturating_sub(retention_days as u64 * 24 * 60 * 60 * 1000)],
         )?;
+        self.connection.execute(
+            "DELETE FROM application_snapshots WHERE captured_at < ?1",
+            params![snapshot.captured_at.saturating_sub(retention_days as u64 * 86_400_000)],
+        )?;
         Ok(())
+    }
+
+    pub fn application_history(&self, name: &str, range_minutes: u32) -> rusqlite::Result<ApplicationHistory> {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let range_minutes = range_minutes.clamp(1, 10_080);
+        let since = now_ms.saturating_sub(range_minutes as u64 * 60_000);
+        let bucket = (range_minutes as u64 * 60_000 / 300).max(2_000);
+        let mut statement = self.connection.prepare(
+            "SELECT MAX(captured_at), AVG(cpu_percent), CAST(AVG(memory_bytes) AS INTEGER),
+                    CAST(AVG(disk_read_bps) AS INTEGER), CAST(AVG(disk_write_bps) AS INTEGER),
+                    CASE WHEN COUNT(network_bps) > 0 THEN CAST(AVG(network_bps) AS INTEGER) END
+             FROM application_snapshots WHERE lower(app_name) = lower(?1) AND captured_at >= ?2
+             GROUP BY captured_at / ?3 ORDER BY 1")?;
+        let points = statement.query_map(params![name, since, bucket], |row| Ok(ApplicationMetricPoint {
+            captured_at: row.get(0)?, cpu_percent: row.get(1)?, memory_bytes: row.get(2)?,
+            disk_read_bps: row.get(3)?, disk_write_bps: row.get(4)?, network_bps: row.get(5)?,
+        }))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ApplicationHistory { name: name.into(), range_minutes, points })
+    }
+
+    pub fn save_alert(&self, finding: &Finding) -> rusqlite::Result<()> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO alerts (id, kind, severity, title, message, first_seen_at, updated_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 'unread')",
+            params![finding.id, finding.kind, finding.severity, finding.title, finding.message, finding.first_seen_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn resolve_alert(&self, id: &str, updated_at: u64) -> rusqlite::Result<()> {
+        self.connection.execute("UPDATE alerts SET status = 'resolved', updated_at = ?2 WHERE id = ?1 AND status != 'ignored'", params![id, updated_at])?;
+        Ok(())
+    }
+
+    pub fn alerts(&self, status: Option<&str>) -> rusqlite::Result<Vec<AlertRecord>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, kind, severity, title, message, first_seen_at, updated_at, status, note
+             FROM alerts WHERE ?1 IS NULL OR status = ?1 ORDER BY updated_at DESC LIMIT 500")?;
+        statement.query_map([status], |row| Ok(AlertRecord { id: row.get(0)?, kind: row.get(1)?, severity: row.get(2)?, title: row.get(3)?, message: row.get(4)?, first_seen_at: row.get(5)?, updated_at: row.get(6)?, status: row.get(7)?, note: row.get(8)? }))?.collect()
+    }
+
+    pub fn update_alert(&self, id: &str, status: &str, note: &str, updated_at: u64) -> Result<(), String> {
+        if !matches!(status, "unread" | "acknowledged" | "ignored" | "resolved") { return Err("未知告警状态".into()); }
+        if note.chars().count() > 500 { return Err("处理备注不能超过 500 字".into()); }
+        let changed = self.connection.execute("UPDATE alerts SET status = ?2, note = ?3, updated_at = ?4 WHERE id = ?1", params![id, status, note, updated_at]).map_err(|e| e.to_string())?;
+        if changed == 0 { return Err("告警不存在".into()); }
+        Ok(())
+    }
+
+    pub fn periodic_patterns(&self, days: u32) -> rusqlite::Result<Vec<PeriodicPattern>> {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let since = now_ms.saturating_sub(days.clamp(1, 90) as u64 * 86_400_000);
+        let mut statement = self.connection.prepare(
+            "SELECT CAST(strftime('%H', captured_at / 1000, 'unixepoch', 'localtime') AS INTEGER), COUNT(*), AVG(cpu_percent), AVG(memory_percent)
+             FROM system_snapshots WHERE captured_at >= ?1 GROUP BY 1 HAVING COUNT(*) >= 10 ORDER BY 1")?;
+        let rows = statement.query_map([since], |row| {
+            let cpu: f32 = row.get(2)?; let memory: f32 = row.get(3)?;
+            Ok(PeriodicPattern { hour: row.get(0)?, sample_count: row.get(1)?, average_cpu_percent: cpu, average_memory_percent: memory, signal: if cpu >= 70.0 && memory >= 80.0 { "CPU 与内存周期性偏高" } else if cpu >= 70.0 { "CPU 周期性偏高" } else if memory >= 80.0 { "内存周期性偏高" } else { "正常时段" }.into() })
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows.into_iter().filter(|row| row.signal != "正常时段").collect())
     }
 
     pub fn save_event(&self, event: &TimelineEvent) -> rusqlite::Result<()> {
