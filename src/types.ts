@@ -16,6 +16,9 @@ export interface ProcessSample {
   memoryBytes: number;
   isCritical: boolean;
   threadCount?: number;
+  handleCount?: number | null;
+  diskReadBps?: number;
+  diskWriteBps?: number;
 }
 
 export interface ApplicationGroup {
@@ -24,6 +27,9 @@ export interface ApplicationGroup {
   memberCount: number;
   cpuPercent: number;
   memoryBytes: number;
+  diskReadBps?: number;
+  diskWriteBps?: number;
+  networkBps?: number | null;
   rootProcess: ProcessSample;
   members: ProcessSample[];
 }
@@ -41,8 +47,22 @@ export interface SystemSnapshot {
   diskTotalBytes: number;
   diskAvailableBytes: number;
   uptimeSeconds: number;
+  hardware: HardwareSnapshot;
   processes: ProcessSample[];
   applications: ApplicationGroup[];
+}
+
+export interface HardwareSnapshot {
+  cpuCores: { name: string; usagePercent: number; frequencyMhz: number }[];
+  gpus: { name: string; usagePercent: number; memoryUsedBytes: number; memoryTotalBytes: number }[];
+  battery: { chargePercent: number; charging: boolean; acConnected: boolean; lifeSeconds: number | null } | null;
+  temperatures: { label: string; celsius: number; maxCelsius: number | null }[];
+  fans: { label: string; rpm: number }[];
+  disks: { name: string; mountPoint: string; totalBytes: number; availableBytes: number; readBps: number; writeBps: number }[];
+  networks: { name: string; receivedBps: number; transmittedBps: number }[];
+  gpuStatus: string;
+  fanStatus: string;
+  appNetworkStatus: string;
 }
 
 export interface Finding {

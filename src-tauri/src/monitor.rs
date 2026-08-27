@@ -1,14 +1,15 @@
 use crate::storage::Storage;
 use crate::types::{
     ActionPreview, ActionResult, AppUsageRecord, ApplicationGroup, CurrentStatus, Finding,
-    HistorySummary, LocalDiagnosis, ProcessSample, SystemSnapshot, TimelineEvent, UserSettings,
-    VerificationStatus,
+    BatteryMetric, CpuCoreMetric, DiskMetric, FanMetric, GpuMetric, HardwareSnapshot,
+    HistorySummary, LocalDiagnosis, NetworkMetric, ProcessSample, SystemSnapshot, TemperatureMetric,
+    TimelineEvent, UserSettings, VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
     time::{SystemTime, UNIX_EPOCH},
 };
-use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate, System};
+use sysinfo::{Components, Disks, Networks, Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
 
 const PREVIEW_TTL_SECONDS: u64 = 30;
@@ -79,12 +80,17 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
             let member_count = members.len();
             let cpu_percent = members.iter().map(|process| process.cpu_percent).sum();
             let memory_bytes = members.iter().map(|process| process.memory_bytes).sum();
+            let disk_read_bps = members.iter().map(|process| process.disk_read_bps).sum();
+            let disk_write_bps = members.iter().map(|process| process.disk_write_bps).sum();
             Some(ApplicationGroup {
                 root_pid,
                 name: root_process.name.clone(),
                 member_count,
                 cpu_percent,
                 memory_bytes,
+                disk_read_bps,
+                disk_write_bps,
+                network_bps: None,
                 root_process,
                 members,
             })
@@ -134,6 +140,36 @@ fn process_thread_counts() -> HashMap<u32, usize> {
         CloseHandle(snapshot);
     }
     counts
+}
+
+fn battery_metric() -> Option<BatteryMetric> {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    unsafe {
+        let mut status: SYSTEM_POWER_STATUS = std::mem::zeroed();
+        if GetSystemPowerStatus(&mut status) == 0 || status.BatteryFlag == 128 { return None; }
+        Some(BatteryMetric {
+            charge_percent: status.BatteryLifePercent.min(100),
+            charging: status.BatteryFlag & 8 != 0,
+            ac_connected: status.ACLineStatus == 1,
+            life_seconds: (status.BatteryLifeTime != u32::MAX).then_some(status.BatteryLifeTime as u64),
+        })
+    }
+}
+
+fn gpu_metrics() -> (Vec<GpuMetric>, String) {
+    #[cfg(windows)] use std::os::windows::process::CommandExt;
+    let mut command = std::process::Command::new("nvidia-smi.exe");
+    command.args(["--query-gpu=name,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]);
+    #[cfg(windows)] command.creation_flags(0x08000000);
+    let Ok(output) = command.output() else { return (vec![], "当前显卡驱动未提供可用的 GPU 性能接口".into()) };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let values = text.lines().filter_map(|line| {
+        let columns: Vec<_> = line.split(',').map(str::trim).collect();
+        if columns.len() != 4 { return None; }
+        Some(GpuMetric { name: columns[0].into(), usage_percent: columns[1].parse().ok()?, memory_used_bytes: columns[2].parse::<u64>().ok()? * 1024 * 1024, memory_total_bytes: columns[3].parse::<u64>().ok()? * 1024 * 1024 })
+    }).collect::<Vec<_>>();
+    let status = if values.is_empty() { "GPU 数据暂时不可用" } else { "由显卡驱动实时提供" }.into();
+    (values, status)
 }
 
 #[derive(Default)]
@@ -194,6 +230,7 @@ pub struct Monitor {
     system: System,
     disks: Disks,
     networks: Networks,
+    components: Components,
     storage: Option<Storage>,
     snapshot: Option<SystemSnapshot>,
     findings: Vec<Finding>,
@@ -228,6 +265,7 @@ impl Monitor {
             system: System::new_all(),
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
+            components: Components::new_with_refreshed_list(),
             storage,
             snapshot: None,
             findings: vec![],
@@ -263,6 +301,7 @@ impl Monitor {
         self.system.refresh_processes(ProcessesToUpdate::All, true);
         self.disks.refresh(true);
         self.networks.refresh(true);
+        self.components.refresh(true);
 
         let total = self.system.total_memory();
         let used = self.system.used_memory();
@@ -287,6 +326,9 @@ impl Monitor {
                     memory_bytes: process.memory(),
                     is_critical: is_critical(&name),
                     thread_count: thread_counts.get(&pid.as_u32()).copied().unwrap_or(0),
+                    handle_count: process.open_files(),
+                    disk_read_bps: process.disk_usage().read_bytes / self.sampling_interval_seconds().max(1),
+                    disk_write_bps: process.disk_usage().written_bytes / self.sampling_interval_seconds().max(1),
                 }
             })
             .collect();
@@ -328,6 +370,19 @@ impl Monitor {
                     )
                 });
 
+        let (gpus, gpu_status) = gpu_metrics();
+        let hardware = HardwareSnapshot {
+            cpu_cores: self.system.cpus().iter().enumerate().map(|(index, cpu)| CpuCoreMetric { name: format!("核心 {}", index + 1), usage_percent: cpu.cpu_usage(), frequency_mhz: cpu.frequency() }).collect(),
+            gpus,
+            battery: battery_metric(),
+            temperatures: self.components.list().iter().filter_map(|item| item.temperature().map(|celsius| TemperatureMetric { label: item.label().into(), celsius, max_celsius: item.max() })).collect(),
+            fans: Vec::<FanMetric>::new(),
+            disks: self.disks.list().iter().map(|disk| { let usage = disk.usage(); DiskMetric { name: disk.name().to_string_lossy().into_owned(), mount_point: disk.mount_point().to_string_lossy().into_owned(), total_bytes: disk.total_space(), available_bytes: disk.available_space(), read_bps: usage.read_bytes / self.sampling_interval_seconds().max(1), write_bps: usage.written_bytes / self.sampling_interval_seconds().max(1) } }).collect(),
+            networks: self.networks.iter().map(|(name, data)| NetworkMetric { name: name.clone(), received_bps: data.received() / self.sampling_interval_seconds().max(1), transmitted_bps: data.transmitted() / self.sampling_interval_seconds().max(1) }).collect(),
+            gpu_status,
+            fan_status: "Windows 未向当前进程公开风扇转速传感器".into(),
+            app_network_status: "Windows 需要 ETW 会话才能可靠归属应用网络流量，当前版本暂不伪造数据".into(),
+        };
         let snapshot = SystemSnapshot {
             captured_at: now() * 1000,
             cpu_percent: self.system.global_cpu_usage(),
@@ -341,6 +396,7 @@ impl Monitor {
             disk_total_bytes: self.disks.list().iter().map(|disk| disk.total_space()).sum(),
             disk_available_bytes: self.disks.list().iter().map(|disk| disk.available_space()).sum(),
             uptime_seconds: System::uptime(),
+            hardware,
             processes,
             applications,
         };
@@ -950,6 +1006,9 @@ impl Monitor {
             memory_bytes: process.memory(),
             is_critical: critical,
             thread_count: 0,
+            handle_count: process.open_files(),
+            disk_read_bps: 0,
+            disk_write_bps: 0,
         };
         let label = match level.as_str() {
             "belowNormal" => "低于正常",
@@ -1004,6 +1063,9 @@ impl Monitor {
             memory_bytes: process.memory(),
             is_critical: critical,
             thread_count: 0,
+            handle_count: process.open_files(),
+            disk_read_bps: 0,
+            disk_write_bps: 0,
         };
         let preview = ActionPreview {
             preview_id: Uuid::new_v4().to_string(),
@@ -1174,6 +1236,9 @@ mod tests {
             memory_bytes: memory,
             is_critical: false,
             thread_count: 1,
+            handle_count: Some(1),
+            disk_read_bps: 0,
+            disk_write_bps: 0,
         };
         let groups = build_application_groups(&[
             sample(10, None, "chrome.exe", 5.0, 100),

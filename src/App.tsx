@@ -76,6 +76,8 @@ export default function App() {
   const [usageTab, setUsageTab] = useState<"charts" | "list">("charts");
   const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
   const [securityTab, setSecurityTab] = useState<"overview" | "programs" | "startup" | "network" | "tasks" | "services">("overview");
+  const [hardwareOpen, setHardwareOpen] = useState(false);
+  const [hardwareTab, setHardwareTab] = useState<"cpu" | "gpu" | "power" | "disks" | "network" | "apps">("cpu");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -182,7 +184,7 @@ export default function App() {
   const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -242,6 +244,17 @@ export default function App() {
     </div>
 
     {message && <div className="toast" onClick={() => setMessage("")}>{message}</div>}
+    {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>
+      <div className="report-scroll"><div className="report-tabs hardware-tabs" role="tablist">{([['cpu','CPU 核心'],['gpu','GPU'],['power','电池与传感器'],['disks','磁盘分区'],['network','网络适配器'],['apps','应用资源']] as const).map(([key,label]) => <button key={key} className={hardwareTab === key ? "active" : ""} onClick={() => setHardwareTab(key)}>{label}</button>)}</div>
+      {hardwareTab === "cpu" && <div className="hardware-grid">{snap.hardware.cpuCores.map(core => <article key={core.name}><span>{core.name}</span><b>{core.usagePercent.toFixed(1)}%</b><i><em style={{width: `${core.usagePercent}%`}} /></i><small>{core.frequencyMhz} MHz</small></article>)}</div>}
+      {hardwareTab === "gpu" && <div>{snap.hardware.gpus.map(gpu => <article className="hardware-row" key={gpu.name}><div><b>{gpu.name}</b><small>驱动实时指标</small></div><span>使用率 {gpu.usagePercent.toFixed(1)}%</span><span>显存 {formatBytes(gpu.memoryUsedBytes)} / {formatBytes(gpu.memoryTotalBytes)}</span></article>)}{!snap.hardware.gpus.length && <p className="availability">{snap.hardware.gpuStatus}</p>}</div>}
+      {hardwareTab === "power" && <div className="sensor-section">{snap.hardware.battery ? <article className="hardware-row"><div><b>电池 {snap.hardware.battery.chargePercent}%</b><small>{snap.hardware.battery.charging ? "正在充电" : snap.hardware.battery.acConnected ? "已连接电源" : "正在放电"}</small></div><span>{snap.hardware.battery.lifeSeconds ? `预计 ${formatDuration(snap.hardware.battery.lifeSeconds)}` : "剩余时间未知"}</span></article> : <p className="availability">未检测到电池，台式机通常没有此项。</p>}<h4>温度</h4>{snap.hardware.temperatures.map(sensor => <article className="hardware-row" key={sensor.label}><b>{sensor.label}</b><span>{sensor.celsius.toFixed(1)}°C{sensor.maxCelsius ? ` · 峰值 ${sensor.maxCelsius.toFixed(1)}°C` : ""}</span></article>)}{!snap.hardware.temperatures.length && <p className="availability">硬件或驱动未向 Windows 提供温度传感器。</p>}<h4>风扇</h4>{snap.hardware.fans.map(fan => <article className="hardware-row" key={fan.label}><b>{fan.label}</b><span>{fan.rpm} RPM</span></article>)}{!snap.hardware.fans.length && <p className="availability">{snap.hardware.fanStatus}</p>}</div>}
+      {hardwareTab === "disks" && <div>{snap.hardware.disks.map(disk => <article className="hardware-row" key={`${disk.name}-${disk.mountPoint}`}><div><b>{disk.name || "本地磁盘"} · {disk.mountPoint}</b><small>可用 {formatBytes(disk.availableBytes)} / {formatBytes(disk.totalBytes)}</small></div><span>读 {formatRate(disk.readBps)}</span><span>写 {formatRate(disk.writeBps)}</span></article>)}</div>}
+      {hardwareTab === "network" && <div>{snap.hardware.networks.map(adapter => <article className="hardware-row" key={adapter.name}><b>{adapter.name}</b><span>下载 {formatRate(adapter.receivedBps)}</span><span>上传 {formatRate(adapter.transmittedBps)}</span></article>)}</div>}
+      {hardwareTab === "apps" && <div><p className="availability">{snap.hardware.appNetworkStatus}</p>{snap.applications.map(app => <article className="hardware-row" key={`${app.rootPid}-${app.name}`}><div><b>{app.name}</b><small>{app.memberCount} 进程 · {app.members.reduce((sum,item) => sum + (item.handleCount ?? 0), 0)} 句柄</small></div><span>磁盘读 {formatRate(app.diskReadBps ?? 0)}</span><span>磁盘写 {formatRate(app.diskWriteBps ?? 0)}</span><span>网络 --</span></article>)}</div>}
+      </div>
+    </section></div>}
     {security && <div className="modal-backdrop" onClick={() => setSecurity(null)}><section className="modal report-modal security-report" onClick={e => e.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">只读安全扫描</span><h3>🛡️ 看门报告</h3></div><button className="modal-close" onClick={() => setSecurity(null)} aria-label="关闭看门报告">×</button></div>
       <div className="report-scroll">

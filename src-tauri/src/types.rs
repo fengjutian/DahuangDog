@@ -11,6 +11,9 @@ pub struct ProcessSample {
     pub memory_bytes: u64,
     pub is_critical: bool,
     pub thread_count: usize,
+    pub handle_count: Option<usize>,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -21,6 +24,9 @@ pub struct ApplicationGroup {
     pub member_count: usize,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub network_bps: Option<u64>,
     pub root_process: ProcessSample,
     pub members: Vec<ProcessSample>,
 }
@@ -40,9 +46,47 @@ pub struct SystemSnapshot {
     pub disk_total_bytes: u64,
     pub disk_available_bytes: u64,
     pub uptime_seconds: u64,
+    pub hardware: HardwareSnapshot,
     pub processes: Vec<ProcessSample>,
     pub applications: Vec<ApplicationGroup>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareSnapshot {
+    pub cpu_cores: Vec<CpuCoreMetric>,
+    pub gpus: Vec<GpuMetric>,
+    pub battery: Option<BatteryMetric>,
+    pub temperatures: Vec<TemperatureMetric>,
+    pub fans: Vec<FanMetric>,
+    pub disks: Vec<DiskMetric>,
+    pub networks: Vec<NetworkMetric>,
+    pub gpu_status: String,
+    pub fan_status: String,
+    pub app_network_status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuCoreMetric { pub name: String, pub usage_percent: f32, pub frequency_mhz: u64 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuMetric { pub name: String, pub usage_percent: f32, pub memory_used_bytes: u64, pub memory_total_bytes: u64 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatteryMetric { pub charge_percent: u8, pub charging: bool, pub ac_connected: bool, pub life_seconds: Option<u64> }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemperatureMetric { pub label: String, pub celsius: f32, pub max_celsius: Option<f32> }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FanMetric { pub label: String, pub rpm: u32 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskMetric { pub name: String, pub mount_point: String, pub total_bytes: u64, pub available_bytes: u64, pub read_bps: u64, pub write_bps: u64 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkMetric { pub name: String, pub received_bps: u64, pub transmitted_bps: u64 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
