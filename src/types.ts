@@ -43,7 +43,7 @@ export interface SystemSnapshot {
 
 export interface Finding {
   id: string;
-  kind: "cpu.sustained_high" | "memory.pressure";
+  kind: string;
   severity: "warning" | "critical";
   title: string;
   message: string;

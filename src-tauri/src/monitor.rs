@@ -99,6 +99,41 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
     applications
 }
 
+#[derive(Default)]
+struct RollingBaseline {
+    values: VecDeque<f64>,
+}
+
+impl RollingBaseline {
+    fn assess(&self, value: f64, absolute_floor: f64) -> Option<(f64, f64)> {
+        if self.values.len() < 30 || value < absolute_floor {
+            return None;
+        }
+        let mut sorted: Vec<_> = self.values.iter().copied().collect();
+        sorted.sort_by(f64::total_cmp);
+        let median = sorted[sorted.len() / 2];
+        let mut deviations: Vec<_> = sorted.iter().map(|item| (item - median).abs()).collect();
+        deviations.sort_by(f64::total_cmp);
+        let mad = deviations[deviations.len() / 2].max(1.0);
+        (value > median + 6.0 * mad && value > median * 2.5).then_some((median, mad))
+    }
+
+    fn push(&mut self, value: f64) {
+        self.values.push_back(value);
+        self.values.truncate(900);
+    }
+}
+
+fn memory_growth(history: &VecDeque<(u64, u64)>) -> Option<(u64, u64)> {
+    let (first_at, first) = history.front().copied()?;
+    let (last_at, last) = history.back().copied()?;
+    let growth = last.saturating_sub(first);
+    (last_at.saturating_sub(first_at) >= 20 * 60
+        && growth >= 1024 * 1024 * 1024
+        && last >= first.saturating_add(first / 2))
+    .then_some((growth, last_at.saturating_sub(first_at)))
+}
+
 #[derive(Clone)]
 struct PendingAction {
     preview: ActionPreview,
@@ -132,6 +167,12 @@ pub struct Monitor {
     verification: Option<VerificationStatus>,
     verification_context: Option<VerificationContext>,
     settings: UserSettings,
+    disk_baseline: RollingBaseline,
+    network_baseline: RollingBaseline,
+    disk_anomaly_samples: u8,
+    network_anomaly_samples: u8,
+    memory_history: HashMap<(u32, u64), VecDeque<(u64, u64)>>,
+    last_alert_at: HashMap<String, u64>,
 }
 
 impl Monitor {
@@ -155,6 +196,12 @@ impl Monitor {
             verification: None,
             verification_context: None,
             settings,
+            disk_baseline: RollingBaseline::default(),
+            network_baseline: RollingBaseline::default(),
+            disk_anomaly_samples: 0,
+            network_anomaly_samples: 0,
+            memory_history: HashMap::new(),
+            last_alert_at: HashMap::new(),
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -298,12 +345,141 @@ impl Monitor {
                 process,
             );
         }
+
+        let disk_bps = snapshot
+            .disk_read_bps
+            .saturating_add(snapshot.disk_write_bps) as f64;
+        let disk_deviation = self.disk_baseline.assess(disk_bps, 20.0 * 1024.0 * 1024.0);
+        self.disk_anomaly_samples = if disk_deviation.is_some() {
+            self.disk_anomaly_samples.saturating_add(1)
+        } else {
+            0
+        };
+        self.disk_baseline.push(disk_bps);
+        if self.disk_anomaly_samples >= 3
+            && !self
+                .findings
+                .iter()
+                .any(|finding| finding.kind == "disk.io_spike")
+        {
+            let (median, mad) = disk_deviation.unwrap_or_default();
+            self.add_finding_with_evidence(
+                "disk.io_spike",
+                "磁盘读写突然变忙",
+                "磁盘流量连续偏离了近期正常水平。".into(),
+                vec![
+                    format!("当前 {:.1} MB/s", disk_bps / 1024.0 / 1024.0),
+                    format!("滚动中位数 {:.1} MB/s", median / 1024.0 / 1024.0),
+                    format!("偏差尺度 MAD {:.1} MB/s", mad / 1024.0 / 1024.0),
+                    "已连续确认 3 个样本".into(),
+                ],
+                snapshot
+                    .applications
+                    .first()
+                    .map(|application| application.root_process.clone()),
+            );
+        }
+
+        let network_bps = snapshot
+            .network_receive_bps
+            .saturating_add(snapshot.network_send_bps) as f64;
+        let network_deviation = self
+            .network_baseline
+            .assess(network_bps, 10.0 * 1024.0 * 1024.0);
+        self.network_anomaly_samples = if network_deviation.is_some() {
+            self.network_anomaly_samples.saturating_add(1)
+        } else {
+            0
+        };
+        self.network_baseline.push(network_bps);
+        if self.network_anomaly_samples >= 3
+            && !self
+                .findings
+                .iter()
+                .any(|finding| finding.kind == "network.traffic_spike")
+        {
+            let (median, mad) = network_deviation.unwrap_or_default();
+            self.add_finding_with_evidence(
+                "network.traffic_spike",
+                "网络流量突然增大",
+                "网络收发连续偏离了近期正常水平。".into(),
+                vec![
+                    format!("当前 {:.1} MB/s", network_bps / 1024.0 / 1024.0),
+                    format!("滚动中位数 {:.1} MB/s", median / 1024.0 / 1024.0),
+                    format!("偏差尺度 MAD {:.1} MB/s", mad / 1024.0 / 1024.0),
+                    "已连续确认 3 个样本".into(),
+                ],
+                None,
+            );
+        }
+
+        let current_time = now();
+        let active_keys: std::collections::HashSet<_> = snapshot
+            .applications
+            .iter()
+            .map(|application| (application.root_pid, application.root_process.started_at))
+            .collect();
+        let mut growth_candidates = Vec::new();
+        for application in &snapshot.applications {
+            let key = (application.root_pid, application.root_process.started_at);
+            let history = self.memory_history.entry(key).or_default();
+            history.push_back((current_time, application.memory_bytes));
+            while history
+                .front()
+                .is_some_and(|(captured, _)| current_time.saturating_sub(*captured) > 30 * 60)
+            {
+                history.pop_front();
+            }
+            if let Some((growth, duration)) = memory_growth(history) {
+                growth_candidates.push((application.clone(), growth, duration));
+            }
+        }
+        self.memory_history
+            .retain(|key, _| active_keys.contains(key));
+        let growing_keys: std::collections::HashSet<_> = growth_candidates
+            .iter()
+            .map(|(application, _, _)| (application.root_pid, application.root_process.started_at))
+            .collect();
+        for (application, growth, duration) in growth_candidates {
+            let kind = format!(
+                "process.memory_growth:{}:{}",
+                application.root_pid, application.root_process.started_at
+            );
+            if self.findings.iter().any(|finding| finding.kind == kind) {
+                continue;
+            }
+            self.add_finding_with_evidence(
+                &kind,
+                &format!("{} 的内存持续增长", application.name),
+                "不像一次普通波动，可能存在缓存积累或内存泄漏。".into(),
+                vec![
+                    format!(
+                        "{} 分钟增长 {:.1} GB",
+                        duration / 60,
+                        growth as f64 / 1024.0 / 1024.0 / 1024.0
+                    ),
+                    format!(
+                        "当前应用总内存 {:.1} GB",
+                        application.memory_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+                    ),
+                    format!("包含 {} 个进程", application.member_count),
+                ],
+                Some(application.root_process),
+            );
+        }
+
         let cpu_recovered = snapshot.cpu_percent < self.settings.cpu_threshold - 15.0;
         let memory_recovered = snapshot.memory_percent < self.settings.memory_threshold - 10.0;
         let before = self.findings.len();
         self.findings.retain(|f| {
             !(f.kind == "cpu.sustained_high" && cpu_recovered
-                || f.kind == "memory.pressure" && memory_recovered)
+                || f.kind == "memory.pressure" && memory_recovered
+                || f.kind == "disk.io_spike" && self.disk_anomaly_samples == 0
+                || f.kind == "network.traffic_spike" && self.network_anomaly_samples == 0
+                || f.kind.starts_with("process.memory_growth:")
+                    && f.process.as_ref().is_none_or(|process| {
+                        !growing_keys.contains(&(process.pid, process.started_at))
+                    }))
         });
         if before > self.findings.len() {
             self.push_event("resolved", "刚才的资源压力已经恢复");
@@ -318,6 +494,32 @@ impl Monitor {
         value: f32,
         process: Option<ProcessSample>,
     ) {
+        self.add_finding_with_evidence(
+            kind,
+            title,
+            message,
+            vec![format!("当前读数 {:.1}%", value), "已排除短时尖峰".into()],
+            process,
+        );
+    }
+
+    fn add_finding_with_evidence(
+        &mut self,
+        kind: &str,
+        title: &str,
+        message: String,
+        evidence: Vec<String>,
+        process: Option<ProcessSample>,
+    ) {
+        let current = now();
+        if self
+            .last_alert_at
+            .get(kind)
+            .is_some_and(|last| current.saturating_sub(*last) < 10 * 60)
+        {
+            return;
+        }
+        self.last_alert_at.insert(kind.into(), current);
         self.findings.push(Finding {
             id: Uuid::new_v4().to_string(),
             kind: kind.into(),
@@ -325,7 +527,7 @@ impl Monitor {
             title: title.into(),
             message: message.clone(),
             first_seen_at: now() * 1000,
-            evidence: vec![format!("当前读数 {:.1}%", value), "已排除短时尖峰".into()],
+            evidence,
             process,
         });
         self.push_event("finding", &format!("发现异常：{title}。正在调查原因"));
@@ -824,5 +1026,25 @@ mod tests {
         assert!(groups
             .iter()
             .any(|group| group.name == "helper.exe" && group.member_count == 1));
+    }
+
+    #[test]
+    fn rolling_baseline_uses_median_and_mad() {
+        let mut baseline = RollingBaseline::default();
+        for value in 1..=40 {
+            baseline.push(1_000_000.0 + (value % 3) as f64 * 10_000.0);
+        }
+        assert!(baseline.assess(5_000_000.0, 500_000.0).is_some());
+        assert!(baseline.assess(1_020_000.0, 500_000.0).is_none());
+    }
+
+    #[test]
+    fn detects_sustained_application_memory_growth() {
+        let mut history = VecDeque::new();
+        history.push_back((0, 1024 * 1024 * 1024));
+        history.push_back((20 * 60, 3 * 1024 * 1024 * 1024));
+        let (growth, duration) = memory_growth(&history).unwrap();
+        assert_eq!(growth, 2 * 1024 * 1024 * 1024);
+        assert_eq!(duration, 20 * 60);
     }
 }
