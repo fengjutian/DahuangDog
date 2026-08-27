@@ -16,8 +16,13 @@ const demoStatus: CurrentStatus = {
     networkReceiveBps: 2_850_000,
     networkSendBps: 310_000,
     processes: [
-      { pid: 4242, startedAt: Date.now() / 1000 - 3600, name: "chrome.exe", cpuPercent: 8.2, memoryBytes: 1_610_612_736, isCritical: false },
-      { pid: 2333, startedAt: Date.now() / 1000 - 7200, name: "Code.exe", cpuPercent: 3.4, memoryBytes: 845_152_256, isCritical: false }
+      { pid: 4242, parentPid: null, startedAt: Date.now() / 1000 - 3600, name: "chrome.exe", cpuPercent: 8.2, memoryBytes: 1_610_612_736, isCritical: false },
+      { pid: 4243, parentPid: 4242, startedAt: Date.now() / 1000 - 3500, name: "chrome.exe", cpuPercent: 2.1, memoryBytes: 410_612_736, isCritical: false },
+      { pid: 2333, parentPid: null, startedAt: Date.now() / 1000 - 7200, name: "Code.exe", cpuPercent: 3.4, memoryBytes: 845_152_256, isCritical: false }
+    ],
+    applications: [
+      { rootPid: 4242, name: "chrome.exe", memberCount: 2, cpuPercent: 10.3, memoryBytes: 2_021_225_472, rootProcess: { pid: 4242, parentPid: null, startedAt: Date.now() / 1000 - 3600, name: "chrome.exe", cpuPercent: 8.2, memoryBytes: 1_610_612_736, isCritical: false }, members: [] },
+      { rootPid: 2333, name: "Code.exe", memberCount: 1, cpuPercent: 3.4, memoryBytes: 845_152_256, rootProcess: { pid: 2333, parentPid: null, startedAt: Date.now() / 1000 - 7200, name: "Code.exe", cpuPercent: 3.4, memoryBytes: 845_152_256, isCritical: false }, members: [] }
     ]
   },
   findings: [],

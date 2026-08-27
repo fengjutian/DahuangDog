@@ -4,11 +4,24 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ProcessSample {
     pub pid: u32,
+    pub parent_pid: Option<u32>,
     pub started_at: u64,
     pub name: String,
     pub cpu_percent: f32,
     pub memory_bytes: u64,
     pub is_critical: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationGroup {
+    pub root_pid: u32,
+    pub name: String,
+    pub member_count: usize,
+    pub cpu_percent: f32,
+    pub memory_bytes: u64,
+    pub root_process: ProcessSample,
+    pub members: Vec<ProcessSample>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -24,6 +37,7 @@ pub struct SystemSnapshot {
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
     pub processes: Vec<ProcessSample>,
+    pub applications: Vec<ApplicationGroup>,
 }
 
 #[derive(Clone, Debug, Serialize)]

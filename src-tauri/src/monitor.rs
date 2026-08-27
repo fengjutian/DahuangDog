@@ -1,7 +1,7 @@
 use crate::storage::Storage;
 use crate::types::{
-    ActionPreview, ActionResult, CurrentStatus, Finding, HistorySummary, LocalDiagnosis,
-    ProcessSample, SystemSnapshot, TimelineEvent, UserSettings, VerificationStatus,
+    ActionPreview, ActionResult, ApplicationGroup, CurrentStatus, Finding, HistorySummary,
+    LocalDiagnosis, ProcessSample, SystemSnapshot, TimelineEvent, UserSettings, VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -39,6 +39,64 @@ fn is_critical(name: &str) -> bool {
 
 fn required_high_samples(interval_seconds: u64) -> u8 {
     (60 / interval_seconds.max(1)).clamp(1, u8::MAX as u64) as u8
+}
+
+fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup> {
+    let index: HashMap<u32, &ProcessSample> = processes
+        .iter()
+        .map(|process| (process.pid, process))
+        .collect();
+    let mut grouped: HashMap<u32, Vec<ProcessSample>> = HashMap::new();
+    for process in processes {
+        let mut root_pid = process.pid;
+        let mut parent_pid = process.parent_pid;
+        let mut depth = 0;
+        while let Some(pid) = parent_pid {
+            let Some(parent) = index.get(&pid) else {
+                break;
+            };
+            if !parent.name.eq_ignore_ascii_case(&process.name) {
+                break;
+            }
+            root_pid = parent.pid;
+            parent_pid = parent.parent_pid;
+            depth += 1;
+            if depth >= 32 {
+                break;
+            }
+        }
+        grouped.entry(root_pid).or_default().push(process.clone());
+    }
+    let mut applications: Vec<_> = grouped
+        .into_iter()
+        .filter_map(|(root_pid, mut members)| {
+            members.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent));
+            let root_process = index
+                .get(&root_pid)
+                .map(|process| (*process).clone())
+                .or_else(|| members.first().cloned())?;
+            let member_count = members.len();
+            let cpu_percent = members.iter().map(|process| process.cpu_percent).sum();
+            let memory_bytes = members.iter().map(|process| process.memory_bytes).sum();
+            members.truncate(30);
+            Some(ApplicationGroup {
+                root_pid,
+                name: root_process.name.clone(),
+                member_count,
+                cpu_percent,
+                memory_bytes,
+                root_process,
+                members,
+            })
+        })
+        .collect();
+    applications.sort_by(|a, b| {
+        let a_score = a.cpu_percent as f64 * 100_000_000.0 + a.memory_bytes as f64;
+        let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
+        b_score.total_cmp(&a_score)
+    });
+    applications.truncate(30);
+    applications
 }
 
 #[derive(Clone)]
@@ -130,6 +188,7 @@ impl Monitor {
                 let name = process.name().to_string_lossy().into_owned();
                 ProcessSample {
                     pid: pid.as_u32(),
+                    parent_pid: process.parent().map(|parent| parent.as_u32()),
                     started_at: process.start_time(),
                     name: name.clone(),
                     cpu_percent: process.cpu_usage(),
@@ -143,7 +202,8 @@ impl Monitor {
             let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
             b_score.total_cmp(&a_score)
         });
-        processes.truncate(20);
+        let applications = build_application_groups(&processes);
+        processes.truncate(40);
 
         let (disk_read_bytes, disk_write_bytes) =
             self.disks
@@ -177,6 +237,7 @@ impl Monitor {
             network_receive_bps: network_receive_bytes / 2,
             network_send_bps: network_send_bytes / 2,
             processes,
+            applications,
         };
         self.update_detector(&snapshot);
         self.update_verification(&snapshot);
@@ -203,7 +264,10 @@ impl Monitor {
         if self.high_cpu_samples >= required_samples
             && !self.findings.iter().any(|f| f.kind == "cpu.sustained_high")
         {
-            let process = snapshot.processes.first().cloned();
+            let process = snapshot
+                .applications
+                .first()
+                .map(|application| application.root_process.clone());
             self.add_finding(
                 "cpu.sustained_high",
                 "CPU 一直很忙",
@@ -219,10 +283,10 @@ impl Monitor {
             && !self.findings.iter().any(|f| f.kind == "memory.pressure")
         {
             let process = snapshot
-                .processes
+                .applications
                 .iter()
-                .max_by_key(|p| p.memory_bytes)
-                .cloned();
+                .max_by_key(|application| application.memory_bytes)
+                .map(|application| application.root_process.clone());
             self.add_finding(
                 "memory.pressure",
                 "电脑内存有点挤",
@@ -366,12 +430,13 @@ impl Monitor {
             format!("CPU 当前使用率 {:.0}%", snapshot.cpu_percent),
             format!("内存当前使用率 {:.0}%", snapshot.memory_percent),
         ];
-        for process in snapshot.processes.iter().take(3) {
+        for application in snapshot.applications.iter().take(3) {
             details.push(format!(
-                "{}：CPU {:.1}%，内存 {:.1} GB",
-                process.name,
-                process.cpu_percent,
-                process.memory_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+                "{}（{} 个进程）：CPU {:.1}%，内存 {:.1} GB",
+                application.name,
+                application.member_count,
+                application.cpu_percent,
+                application.memory_bytes as f64 / 1024.0 / 1024.0 / 1024.0
             ));
         }
         let (summary, suggestions, confidence) = if snapshot.memory_percent >= 90.0 {
@@ -513,6 +578,7 @@ impl Monitor {
         let critical = is_critical(&name);
         let target = ProcessSample {
             pid,
+            parent_pid: process.parent().map(|parent| parent.as_u32()),
             started_at,
             name: name.clone(),
             cpu_percent: process.cpu_usage(),
@@ -565,6 +631,7 @@ impl Monitor {
         let critical = is_critical(&name);
         let target = ProcessSample {
             pid,
+            parent_pid: process.parent().map(|parent| parent.as_u32()),
             started_at,
             name: name.clone(),
             cpu_percent: process.cpu_usage(),
@@ -727,5 +794,35 @@ mod tests {
         assert!(count < required);
         count = count.saturating_add(1);
         assert_eq!(count, required);
+    }
+
+    #[test]
+    fn groups_same_name_child_processes() {
+        let sample = |pid, parent_pid, name: &str, cpu, memory| ProcessSample {
+            pid,
+            parent_pid,
+            started_at: 1,
+            name: name.into(),
+            cpu_percent: cpu,
+            memory_bytes: memory,
+            is_critical: false,
+        };
+        let groups = build_application_groups(&[
+            sample(10, None, "chrome.exe", 5.0, 100),
+            sample(11, Some(10), "chrome.exe", 7.0, 200),
+            sample(12, Some(11), "chrome.exe", 3.0, 300),
+            sample(20, Some(10), "helper.exe", 1.0, 50),
+        ]);
+        let chrome = groups
+            .iter()
+            .find(|group| group.name == "chrome.exe")
+            .unwrap();
+        assert_eq!(chrome.root_pid, 10);
+        assert_eq!(chrome.member_count, 3);
+        assert_eq!(chrome.cpu_percent, 15.0);
+        assert_eq!(chrome.memory_bytes, 600);
+        assert!(groups
+            .iter()
+            .any(|group| group.name == "helper.exe" && group.member_count == 1));
     }
 }

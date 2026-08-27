@@ -9,11 +9,22 @@ export type DogState =
 
 export interface ProcessSample {
   pid: number;
+  parentPid: number | null;
   startedAt: number;
   name: string;
   cpuPercent: number;
   memoryBytes: number;
   isCritical: boolean;
+}
+
+export interface ApplicationGroup {
+  rootPid: number;
+  name: string;
+  memberCount: number;
+  cpuPercent: number;
+  memoryBytes: number;
+  rootProcess: ProcessSample;
+  members: ProcessSample[];
 }
 
 export interface SystemSnapshot {
@@ -27,6 +38,7 @@ export interface SystemSnapshot {
   networkReceiveBps: number;
   networkSendBps: number;
   processes: ProcessSample[];
+  applications: ApplicationGroup[];
 }
 
 export interface Finding {

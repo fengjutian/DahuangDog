@@ -58,6 +58,7 @@ export default function App() {
   const [selected, setSelected] = useState<ProcessSample | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [expandedApp, setExpandedApp] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -197,12 +198,16 @@ export default function App() {
     {history && <TrendChart history={history} />}
 
     <div className="columns">
-      <section className="card"><div className="section-title"><h3>正在盯着</h3><span>资源占用靠前</span></div>
-        <div className="process-list">{snap?.processes.slice(0, 6).map(process =>
-          <button className="process" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
-            <span className="process-icon">{process.isCritical ? "🛡️" : "●"}</span><span className="process-name"><b>{process.name}</b><small>PID {process.pid}</small></span>
-            <span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
-          </button>)}{!snap?.processes.length && <p className="empty">还没有采集到进程数据。</p>}</div>
+      <section className="card"><div className="section-title"><h3>正在盯着</h3><span>应用总占用 · 点击展开子进程</span></div>
+        <div className="process-list">{snap?.applications.slice(0, 8).map(app => <div className="app-group" key={`${app.rootPid}-${app.name}`}>
+          <button className="process application" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)}>
+            <span className="process-icon">{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</span><span className="process-name"><b>{app.name}</b><small>{app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
+            <span><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
+          </button>
+          {expandedApp === app.rootPid && <div className="child-processes">{app.members.map(process => <button className="process child" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
+            <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""}</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
+          </button>)}</div>}
+        </div>)}{!snap?.applications.length && <p className="empty">还没有采集到应用数据。</p>}</div>
       </section>
 
       <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><span>最近事件</span></div>
