@@ -1,4 +1,6 @@
-use crate::types::{HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent, UserSettings};
+use crate::types::{
+    AppUsageRecord, HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent, UserSettings,
+};
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf};
 
@@ -55,6 +57,20 @@ impl Storage {
              CREATE TABLE IF NOT EXISTS app_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 value_json TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS app_sessions (
+                session_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_pid INTEGER NOT NULL,
+                started_at INTEGER NOT NULL,
+                first_seen_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                closed_at INTEGER,
+                runtime_seconds INTEGER NOT NULL,
+                foreground_seconds INTEGER NOT NULL,
+                background_seconds INTEGER NOT NULL,
+                member_peak INTEGER NOT NULL,
+                is_running INTEGER NOT NULL
              );",
             )
             .map_err(|error| format!("无法初始化本地记忆：{error}"))?;
@@ -204,8 +220,57 @@ impl Storage {
 
     pub fn clear_memory(&self) -> rusqlite::Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits;",
+            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions;",
         )
+    }
+
+    pub fn close_stale_app_sessions(&self, closed_at: u64) -> rusqlite::Result<()> {
+        self.connection.execute(
+            "UPDATE app_sessions SET closed_at = last_seen_at, is_running = 0,
+                runtime_seconds = MAX(runtime_seconds, (last_seen_at - first_seen_at) / 1000),
+                background_seconds = MAX(0, runtime_seconds - foreground_seconds)
+             WHERE is_running = 1",
+            [],
+        )?;
+        let _ = closed_at;
+        Ok(())
+    }
+
+    pub fn save_app_session(&self, record: &AppUsageRecord) -> rusqlite::Result<()> {
+        self.connection.execute(
+            "INSERT INTO app_sessions (
+                session_id, name, root_pid, started_at, first_seen_at, last_seen_at,
+                closed_at, runtime_seconds, foreground_seconds, background_seconds,
+                member_peak, is_running
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(session_id) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at, closed_at = excluded.closed_at,
+                runtime_seconds = excluded.runtime_seconds,
+                foreground_seconds = excluded.foreground_seconds,
+                background_seconds = excluded.background_seconds,
+                member_peak = excluded.member_peak, is_running = excluded.is_running",
+            params![record.session_id, record.name, record.root_pid, record.started_at,
+                record.first_seen_at, record.last_seen_at, record.closed_at,
+                record.runtime_seconds, record.foreground_seconds, record.background_seconds,
+                record.member_peak, record.is_running],
+        )?;
+        Ok(())
+    }
+
+    pub fn recent_app_sessions(&self, limit: u32) -> rusqlite::Result<Vec<AppUsageRecord>> {
+        let mut statement = self.connection.prepare(
+            "SELECT session_id, name, root_pid, started_at, first_seen_at, last_seen_at,
+                    closed_at, runtime_seconds, foreground_seconds, background_seconds,
+                    member_peak, is_running
+             FROM app_sessions ORDER BY is_running DESC, last_seen_at DESC LIMIT ?1",
+        )?;
+        let records = statement.query_map([limit], |row| Ok(AppUsageRecord {
+            session_id: row.get(0)?, name: row.get(1)?, root_pid: row.get(2)?,
+            started_at: row.get(3)?, first_seen_at: row.get(4)?, last_seen_at: row.get(5)?,
+            closed_at: row.get(6)?, runtime_seconds: row.get(7)?, foreground_seconds: row.get(8)?,
+            background_seconds: row.get(9)?, member_peak: row.get(10)?, is_running: row.get(11)?,
+        }))?.collect();
+        records
     }
 }
 

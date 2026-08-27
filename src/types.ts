@@ -143,6 +143,21 @@ export interface UserSettings {
   retentionDays: number;
 }
 
+export interface AppUsageRecord {
+  sessionId: string;
+  name: string;
+  rootPid: number;
+  startedAt: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  closedAt: number | null;
+  runtimeSeconds: number;
+  foregroundSeconds: number;
+  backgroundSeconds: number;
+  memberPeak: number;
+  isRunning: boolean;
+}
+
 export interface ActionResult {
   actionId: string;
   success: boolean;

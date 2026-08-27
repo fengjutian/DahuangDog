@@ -153,6 +153,23 @@ pub struct UserSettings {
     pub retention_days: u32,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUsageRecord {
+    pub session_id: String,
+    pub name: String,
+    pub root_pid: u32,
+    pub started_at: u64,
+    pub first_seen_at: u64,
+    pub last_seen_at: u64,
+    pub closed_at: Option<u64>,
+    pub runtime_seconds: u64,
+    pub foreground_seconds: u64,
+    pub background_seconds: u64,
+    pub member_peak: usize,
+    pub is_running: bool,
+}
+
 impl Default for UserSettings {
     fn default() -> Self {
         Self {

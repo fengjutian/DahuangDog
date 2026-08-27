@@ -1,7 +1,8 @@
 use crate::storage::Storage;
 use crate::types::{
-    ActionPreview, ActionResult, ApplicationGroup, CurrentStatus, Finding, HistorySummary,
-    LocalDiagnosis, ProcessSample, SystemSnapshot, TimelineEvent, UserSettings, VerificationStatus,
+    ActionPreview, ActionResult, AppUsageRecord, ApplicationGroup, CurrentStatus, Finding,
+    HistorySummary, LocalDiagnosis, ProcessSample, SystemSnapshot, TimelineEvent, UserSettings,
+    VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -78,7 +79,6 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
             let member_count = members.len();
             let cpu_percent = members.iter().map(|process| process.cpu_percent).sum();
             let memory_bytes = members.iter().map(|process| process.memory_bytes).sum();
-            members.truncate(30);
             Some(ApplicationGroup {
                 root_pid,
                 name: root_process.name.clone(),
@@ -95,8 +95,22 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
         let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
         b_score.total_cmp(&a_score)
     });
-    applications.truncate(30);
     applications
+}
+
+fn foreground_process_id() -> Option<u32> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_null() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, &mut pid);
+        (pid != 0).then_some(pid)
+    }
 }
 
 #[derive(Default)]
@@ -173,11 +187,16 @@ pub struct Monitor {
     network_anomaly_samples: u8,
     memory_history: HashMap<(u32, u64), VecDeque<(u64, u64)>>,
     last_alert_at: HashMap<String, u64>,
+    app_sessions: HashMap<(u32, u64), AppUsageRecord>,
+    last_lifecycle_tick: u64,
 }
 
 impl Monitor {
     pub fn new() -> Self {
         let storage = Storage::open_default().ok();
+        if let Some(storage) = &storage {
+            let _ = storage.close_stale_app_sessions(now() * 1000);
+        }
         let settings = storage
             .as_ref()
             .map(Storage::load_settings)
@@ -202,6 +221,8 @@ impl Monitor {
             network_anomaly_samples: 0,
             memory_history: HashMap::new(),
             last_alert_at: HashMap::new(),
+            app_sessions: HashMap::new(),
+            last_lifecycle_tick: now(),
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -249,7 +270,16 @@ impl Monitor {
             let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
             b_score.total_cmp(&a_score)
         });
-        let applications = build_application_groups(&processes);
+        let all_applications = build_application_groups(&processes);
+        self.update_app_lifecycle(&all_applications);
+        let applications = all_applications
+            .into_iter()
+            .take(30)
+            .map(|mut application| {
+                application.members.truncate(30);
+                application
+            })
+            .collect();
         processes.truncate(40);
 
         let (disk_read_bytes, disk_write_bytes) =
@@ -294,6 +324,91 @@ impl Monitor {
         self.snapshot = Some(snapshot);
         self.pending
             .retain(|_, action| action.preview.expires_at >= now() * 1000);
+    }
+
+    fn update_app_lifecycle(&mut self, applications: &[ApplicationGroup]) {
+        let current_seconds = now();
+        let current_ms = current_seconds * 1000;
+        let elapsed = current_seconds
+            .saturating_sub(self.last_lifecycle_tick)
+            .min(self.sampling_interval_seconds().saturating_mul(2));
+        self.last_lifecycle_tick = current_seconds;
+        let foreground_pid = foreground_process_id();
+        let foreground_key = foreground_pid.and_then(|pid| {
+            applications.iter().find(|application| {
+                application
+                    .members
+                    .iter()
+                    .any(|member| member.pid == pid)
+            })
+        }).map(|application| {
+            (application.root_pid, application.root_process.started_at)
+        });
+        let current_keys: std::collections::HashSet<_> = applications
+            .iter()
+            .filter(|application| !application.root_process.is_critical)
+            .map(|application| {
+                (application.root_pid, application.root_process.started_at)
+            })
+            .collect();
+        let mut records = Vec::new();
+        for application in applications
+            .iter()
+            .filter(|application| !application.root_process.is_critical)
+        {
+            let key = (application.root_pid, application.root_process.started_at);
+            let record = self.app_sessions.entry(key).or_insert_with(|| AppUsageRecord {
+                session_id: format!("{}-{}", application.root_pid, application.root_process.started_at),
+                name: application.name.clone(),
+                root_pid: application.root_pid,
+                started_at: application.root_process.started_at * 1000,
+                first_seen_at: current_ms,
+                last_seen_at: current_ms,
+                closed_at: None,
+                runtime_seconds: current_seconds.saturating_sub(application.root_process.started_at),
+                foreground_seconds: 0,
+                background_seconds: 0,
+                member_peak: application.member_count,
+                is_running: true,
+            });
+            record.last_seen_at = current_ms;
+            record.runtime_seconds = current_seconds.saturating_sub(application.root_process.started_at);
+            record.member_peak = record.member_peak.max(application.member_count);
+            if foreground_key == Some(key) {
+                record.foreground_seconds = record.foreground_seconds.saturating_add(elapsed);
+            }
+            record.background_seconds = record.runtime_seconds.saturating_sub(record.foreground_seconds);
+            records.push(record.clone());
+        }
+        let closed_keys: Vec<_> = self
+            .app_sessions
+            .keys()
+            .filter(|key| !current_keys.contains(key))
+            .copied()
+            .collect();
+        for key in closed_keys {
+            if let Some(mut record) = self.app_sessions.remove(&key) {
+                record.closed_at = Some(current_ms);
+                record.last_seen_at = current_ms;
+                record.runtime_seconds = current_seconds.saturating_sub(record.started_at / 1000);
+                record.background_seconds = record.runtime_seconds.saturating_sub(record.foreground_seconds);
+                record.is_running = false;
+                records.push(record);
+            }
+        }
+        if let Some(storage) = &self.storage {
+            for record in records {
+                let _ = storage.save_app_session(&record);
+            }
+        }
+    }
+
+    pub fn app_usage_history(&self) -> Result<Vec<AppUsageRecord>, String> {
+        self.storage
+            .as_ref()
+            .ok_or("本地记忆暂时不可用".to_string())?
+            .recent_app_sessions(200)
+            .map_err(|error| format!("读取应用使用记录失败：{error}"))
     }
 
     fn update_detector(&mut self, snapshot: &SystemSnapshot) {

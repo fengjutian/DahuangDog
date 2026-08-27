@@ -17,8 +17,8 @@ use tauri::{
 };
 use tauri_plugin_notification::NotificationExt;
 use types::{
-    ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport,
-    UserSettings,
+    ActionPreview, ActionResult, AppUsageRecord, CurrentStatus, HistorySummary, LocalDiagnosis,
+    SecurityReport, UserSettings,
 };
 
 type SharedMonitor = Arc<Mutex<Monitor>>;
@@ -127,6 +127,16 @@ fn prepare_process_priority(
         .prepare_priority(pid, started_at, level)
 }
 
+#[tauri::command]
+fn get_app_usage_history(
+    state: tauri::State<'_, SharedMonitor>,
+) -> Result<Vec<AppUsageRecord>, String> {
+    state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .app_usage_history()
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -152,7 +162,8 @@ pub fn run() {
             update_settings,
             clear_local_memory,
             open_process_location,
-            prepare_process_priority
+            prepare_process_priority,
+            get_app_usage_history
         ])
         .setup(move |app| {
             let open = MenuItem::with_id(app, "open", "打开大黄狗", true, None::<&str>)?;
