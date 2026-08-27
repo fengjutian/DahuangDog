@@ -18,6 +18,7 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use types::{
     ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport,
+    UserSettings,
 };
 
 type SharedMonitor = Arc<Mutex<Monitor>>;
@@ -74,6 +75,58 @@ fn get_security_report() -> Result<SecurityReport, String> {
     security::scan_security()
 }
 
+#[tauri::command]
+fn get_settings(state: tauri::State<'_, SharedMonitor>) -> Result<UserSettings, String> {
+    Ok(state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .settings())
+}
+
+#[tauri::command]
+fn update_settings(
+    settings: UserSettings,
+    state: tauri::State<'_, SharedMonitor>,
+) -> Result<UserSettings, String> {
+    state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .update_settings(settings)
+}
+
+#[tauri::command]
+fn clear_local_memory(state: tauri::State<'_, SharedMonitor>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .clear_memory()
+}
+
+#[tauri::command]
+fn open_process_location(
+    pid: u32,
+    started_at: u64,
+    state: tauri::State<'_, SharedMonitor>,
+) -> Result<ActionResult, String> {
+    state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .open_process_location(pid, started_at)
+}
+
+#[tauri::command]
+fn prepare_process_priority(
+    pid: u32,
+    started_at: u64,
+    level: String,
+    state: tauri::State<'_, SharedMonitor>,
+) -> Result<ActionPreview, String> {
+    state
+        .lock()
+        .map_err(|_| "监控状态暂时不可用".to_string())?
+        .prepare_priority(pid, started_at, level)
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -94,7 +147,12 @@ pub fn run() {
             confirm_action,
             get_history,
             diagnose_performance,
-            get_security_report
+            get_security_report,
+            get_settings,
+            update_settings,
+            clear_local_memory,
+            open_process_location,
+            prepare_process_priority
         ])
         .setup(move |app| {
             let open = MenuItem::with_id(app, "open", "打开大黄狗", true, None::<&str>)?;
@@ -134,11 +192,14 @@ pub fn run() {
             thread::spawn(move || {
                 let mut notified_findings = HashSet::new();
                 loop {
+                    let mut interval = 2;
                     if let Ok(mut guard) = monitor.lock() {
                         guard.refresh();
                         let status = guard.status();
                         for finding in &status.findings {
-                            if notified_findings.insert(finding.id.clone()) {
+                            if guard.notifications_enabled()
+                                && notified_findings.insert(finding.id.clone())
+                            {
                                 let _ = app_handle
                                     .notification()
                                     .builder()
@@ -154,8 +215,9 @@ pub fn run() {
                             .collect();
                         notified_findings.retain(|id| active.contains(id));
                         let _ = app_handle.emit("status://updated", status);
+                        interval = guard.sampling_interval_seconds();
                     }
-                    thread::sleep(Duration::from_secs(2));
+                    thread::sleep(Duration::from_secs(interval));
                 }
             });
             Ok(())

@@ -113,13 +113,22 @@ export interface SecurityReport {
 
 export interface ActionPreview {
   previewId: string;
-  action: "terminateProcess";
-  riskLevel: "R2" | "R4";
+  action: "terminateProcess" | "setProcessPriority";
+  riskLevel: "R1" | "R2" | "R4";
   allowed: boolean;
   title: string;
   warning: string;
   target: ProcessSample;
   expiresAt: number;
+}
+
+export interface UserSettings {
+  cpuThreshold: number;
+  memoryThreshold: number;
+  samplingSeconds: number;
+  lowPowerMode: boolean;
+  notificationsEnabled: boolean;
+  retentionDays: number;
 }
 
 export interface ActionResult {

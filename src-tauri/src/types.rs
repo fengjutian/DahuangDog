@@ -128,6 +128,30 @@ pub struct SecurityReport {
     pub summary: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSettings {
+    pub cpu_threshold: f32,
+    pub memory_threshold: f32,
+    pub sampling_seconds: u64,
+    pub low_power_mode: bool,
+    pub notifications_enabled: bool,
+    pub retention_days: u32,
+}
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self {
+            cpu_threshold: 90.0,
+            memory_threshold: 90.0,
+            sampling_seconds: 2,
+            low_power_mode: false,
+            notifications_enabled: true,
+            retention_days: 7,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionPreview {

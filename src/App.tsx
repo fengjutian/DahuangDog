@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { confirmAction, diagnosePerformance, getCurrentStatus, getHistory, getSecurityReport, prepareTerminate } from "./api";
-import type { ActionPreview, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport } from "./types";
+import { clearLocalMemory, confirmAction, diagnosePerformance, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import type { ActionPreview, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -55,6 +55,9 @@ export default function App() {
   const [history, setHistory] = useState<HistorySummary | null>(null);
   const [diagnosis, setDiagnosis] = useState<LocalDiagnosis | null>(null);
   const [security, setSecurity] = useState<SecurityReport | null>(null);
+  const [selected, setSelected] = useState<ProcessSample | null>(null);
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -78,8 +81,24 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => { void getSettings().then(setSettings).catch(() => undefined); }, []);
+
   async function inspect(process: ProcessSample) {
-    try { setPreview(await prepareTerminate(process.pid, process.startedAt)); }
+    setSelected(process);
+  }
+
+  async function requestTerminate(process: ProcessSample) {
+    try { setPreview(await prepareTerminate(process.pid, process.startedAt)); setSelected(null); }
+    catch (error) { setMessage(String(error)); }
+  }
+
+  async function requestPriority(process: ProcessSample, level: "belowNormal" | "normal" | "aboveNormal") {
+    try { setPreview(await preparePriority(process.pid, process.startedAt, level)); setSelected(null); }
+    catch (error) { setMessage(String(error)); }
+  }
+
+  async function reveal(process: ProcessSample) {
+    try { const result = await openProcessLocation(process.pid, process.startedAt); setMessage(result.message); setSelected(null); }
     catch (error) { setMessage(String(error)); }
   }
 
@@ -109,11 +128,25 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+  async function persistSettings() {
+    if (!settings) return;
+    setBusy(true);
+    try { setSettings(await saveSettings(settings)); setMessage("巡逻设置已经保存。" ); setSettingsOpen(false); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function clearMemory() {
+    if (!window.confirm("确定清除所有历史快照、巡逻记录和动作审计吗？这个操作不能撤销。")) return;
+    try { await clearLocalMemory(); setHistory(null); setMessage("旧的本地记忆已经清除。" ); await refresh(); }
+    catch (error) { setMessage(String(error)); }
+  }
+
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -178,11 +211,27 @@ export default function App() {
     </div>
 
     {message && <div className="toast" onClick={() => setMessage("")}>{message}</div>}
+    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>
+      <span className="risk">进程操作</span><h3>{selected.name}</h3><p>PID {selected.pid} · CPU {selected.cpuPercent.toFixed(1)}% · {formatBytes(selected.memoryBytes)}</p>
+      <div className="process-action-list"><button onClick={() => reveal(selected)}>📂 打开文件位置 <small>只读操作</small></button><button onClick={() => requestPriority(selected, "belowNormal")}>⬇ 调低优先级 <small>需要确认</small></button><button onClick={() => requestPriority(selected, "normal")}>↔ 恢复正常优先级 <small>需要确认</small></button><button className="danger-row" onClick={() => requestTerminate(selected)}>结束进程 <small>可能丢失未保存内容</small></button></div>
+      <div className="actions"><button className="secondary" onClick={() => setSelected(null)}>取消</button></div>
+    </section></div>}
+    {settingsOpen && settings && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="modal settings-modal" onClick={e => e.stopPropagation()}>
+      <span className="risk">设置中心</span><h3>巡逻方式</h3>
+      <label>CPU 告警阈值 <output>{settings.cpuThreshold}%</output><input type="range" min="70" max="99" value={settings.cpuThreshold} onChange={e => setSettings({...settings, cpuThreshold: Number(e.target.value)})} /></label>
+      <label>内存告警阈值 <output>{settings.memoryThreshold}%</output><input type="range" min="70" max="99" value={settings.memoryThreshold} onChange={e => setSettings({...settings, memoryThreshold: Number(e.target.value)})} /></label>
+      <label>普通采样间隔 <select value={settings.samplingSeconds} onChange={e => setSettings({...settings, samplingSeconds: Number(e.target.value)})}><option value="2">2 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
+      <label>历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
+      <label className="check"><input type="checkbox" checked={settings.lowPowerMode} onChange={e => setSettings({...settings, lowPowerMode: e.target.checked})} />低功耗模式（固定每 15 秒巡逻）</label>
+      <label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={e => setSettings({...settings, notificationsEnabled: e.target.checked})} />Windows 异常通知</label>
+      <button className="clear-memory" onClick={clearMemory}>清除所有本地记忆</button>
+      <div className="actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>保存设置</button></div>
+    </section></div>}
     {preview && <div className="modal-backdrop" onClick={() => setPreview(null)}><section className="modal" onClick={e => e.stopPropagation()}>
       <span className="risk">{preview.riskLevel} · 需要确认</span><h3>{preview.title}</h3><p>{preview.warning}</p>
       <div className="target"><b>{preview.target.name}</b><span>PID {preview.target.pid} · CPU {preview.target.cpuPercent.toFixed(1)}% · {formatBytes(preview.target.memoryBytes)}</span></div>
       {!preview.allowed && <p className="blocked">为了系统安全，大黄狗拒绝执行这个操作。</p>}
-      <div className="actions"><button className="secondary" onClick={() => setPreview(null)}>先不处理</button>{preview.allowed && <button className="danger" disabled={busy} onClick={execute}>{busy ? "正在处理…" : "确认结束进程"}</button>}</div>
+      <div className="actions"><button className="secondary" onClick={() => setPreview(null)}>先不处理</button>{preview.allowed && <button className={preview.action === "terminateProcess" ? "danger" : "primary"} disabled={busy} onClick={execute}>{busy ? "正在处理…" : preview.action === "terminateProcess" ? "确认结束进程" : "确认调整优先级"}</button>}</div>
     </section></div>}
   </main>;
 }

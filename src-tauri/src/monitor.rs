@@ -1,7 +1,7 @@
 use crate::storage::Storage;
 use crate::types::{
     ActionPreview, ActionResult, CurrentStatus, Finding, HistorySummary, LocalDiagnosis,
-    ProcessSample, SystemSnapshot, TimelineEvent, VerificationStatus,
+    ProcessSample, SystemSnapshot, TimelineEvent, UserSettings, VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -10,9 +10,6 @@ use std::{
 use sysinfo::{Disks, Networks, Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
 
-const HIGH_CPU_PERCENT: f32 = 90.0;
-const HIGH_MEMORY_PERCENT: f32 = 90.0;
-const REQUIRED_HIGH_SAMPLES: u8 = 30;
 const PREVIEW_TTL_SECONDS: u64 = 30;
 const CRITICAL_PROCESSES: &[&str] = &[
     "system",
@@ -40,9 +37,20 @@ fn is_critical(name: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
+fn required_high_samples(interval_seconds: u64) -> u8 {
+    (60 / interval_seconds.max(1)).clamp(1, u8::MAX as u64) as u8
+}
+
 #[derive(Clone)]
 struct PendingAction {
     preview: ActionPreview,
+    kind: PendingActionKind,
+}
+
+#[derive(Clone)]
+enum PendingActionKind {
+    Terminate,
+    SetPriority(String),
 }
 
 struct VerificationContext {
@@ -65,15 +73,21 @@ pub struct Monitor {
     high_memory_samples: u8,
     verification: Option<VerificationStatus>,
     verification_context: Option<VerificationContext>,
+    settings: UserSettings,
 }
 
 impl Monitor {
     pub fn new() -> Self {
+        let storage = Storage::open_default().ok();
+        let settings = storage
+            .as_ref()
+            .map(Storage::load_settings)
+            .unwrap_or_default();
         let mut monitor = Self {
             system: System::new_all(),
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
-            storage: Storage::open_default().ok(),
+            storage,
             snapshot: None,
             findings: vec![],
             timeline: VecDeque::new(),
@@ -82,6 +96,7 @@ impl Monitor {
             high_memory_samples: 0,
             verification: None,
             verification_context: None,
+            settings,
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -166,7 +181,7 @@ impl Monitor {
         self.update_detector(&snapshot);
         self.update_verification(&snapshot);
         if let Some(storage) = &self.storage {
-            let _ = storage.save_snapshot(&snapshot);
+            let _ = storage.save_snapshot(&snapshot, self.settings.retention_days);
         }
         self.snapshot = Some(snapshot);
         self.pending
@@ -174,29 +189,33 @@ impl Monitor {
     }
 
     fn update_detector(&mut self, snapshot: &SystemSnapshot) {
-        self.high_cpu_samples = if snapshot.cpu_percent >= HIGH_CPU_PERCENT {
+        let required_samples = required_high_samples(self.sampling_interval_seconds());
+        self.high_cpu_samples = if snapshot.cpu_percent >= self.settings.cpu_threshold {
             self.high_cpu_samples.saturating_add(1)
         } else {
             0
         };
-        self.high_memory_samples = if snapshot.memory_percent >= HIGH_MEMORY_PERCENT {
+        self.high_memory_samples = if snapshot.memory_percent >= self.settings.memory_threshold {
             self.high_memory_samples.saturating_add(1)
         } else {
             0
         };
-        if self.high_cpu_samples >= REQUIRED_HIGH_SAMPLES
+        if self.high_cpu_samples >= required_samples
             && !self.findings.iter().any(|f| f.kind == "cpu.sustained_high")
         {
             let process = snapshot.processes.first().cloned();
             self.add_finding(
                 "cpu.sustained_high",
                 "CPU 一直很忙",
-                format!("CPU 已持续约 1 分钟高于 {:.0}%", HIGH_CPU_PERCENT),
+                format!(
+                    "CPU 已持续约 1 分钟高于 {:.0}%",
+                    self.settings.cpu_threshold
+                ),
                 snapshot.cpu_percent,
                 process,
             );
         }
-        if self.high_memory_samples >= REQUIRED_HIGH_SAMPLES
+        if self.high_memory_samples >= required_samples
             && !self.findings.iter().any(|f| f.kind == "memory.pressure")
         {
             let process = snapshot
@@ -207,13 +226,16 @@ impl Monitor {
             self.add_finding(
                 "memory.pressure",
                 "电脑内存有点挤",
-                format!("内存已持续约 1 分钟高于 {:.0}%", HIGH_MEMORY_PERCENT),
+                format!(
+                    "内存已持续约 1 分钟高于 {:.0}%",
+                    self.settings.memory_threshold
+                ),
                 snapshot.memory_percent,
                 process,
             );
         }
-        let cpu_recovered = snapshot.cpu_percent < 70.0;
-        let memory_recovered = snapshot.memory_percent < 80.0;
+        let cpu_recovered = snapshot.cpu_percent < self.settings.cpu_threshold - 15.0;
+        let memory_recovered = snapshot.memory_percent < self.settings.memory_threshold - 10.0;
         let before = self.findings.len();
         self.findings.retain(|f| {
             !(f.kind == "cpu.sustained_high" && cpu_recovered
@@ -394,6 +416,138 @@ impl Monitor {
         }
     }
 
+    pub fn settings(&self) -> UserSettings {
+        self.settings.clone()
+    }
+
+    pub fn sampling_interval_seconds(&self) -> u64 {
+        if self.settings.low_power_mode {
+            15
+        } else {
+            self.settings.sampling_seconds.clamp(2, 30)
+        }
+    }
+
+    pub fn notifications_enabled(&self) -> bool {
+        self.settings.notifications_enabled
+    }
+
+    pub fn update_settings(&mut self, settings: UserSettings) -> Result<UserSettings, String> {
+        if !(70.0..=99.0).contains(&settings.cpu_threshold)
+            || !(70.0..=99.0).contains(&settings.memory_threshold)
+            || !(2..=30).contains(&settings.sampling_seconds)
+            || !(1..=90).contains(&settings.retention_days)
+        {
+            return Err("设置超出安全范围".into());
+        }
+        if let Some(storage) = &self.storage {
+            storage.save_settings(&settings)?;
+        }
+        self.settings = settings;
+        self.high_cpu_samples = 0;
+        self.high_memory_samples = 0;
+        self.push_event("patrol", "巡逻设置已经更新");
+        Ok(self.settings.clone())
+    }
+
+    pub fn clear_memory(&mut self) -> Result<(), String> {
+        if let Some(storage) = &self.storage {
+            storage
+                .clear_memory()
+                .map_err(|error| format!("清除本地记忆失败：{error}"))?;
+        }
+        self.timeline.clear();
+        self.findings.clear();
+        self.push_event("patrol", "旧的本地记忆已经清除，从现在重新开始巡逻");
+        Ok(())
+    }
+
+    pub fn open_process_location(
+        &mut self,
+        pid: u32,
+        started_at: u64,
+    ) -> Result<ActionResult, String> {
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let process = self
+            .system
+            .process(Pid::from_u32(pid))
+            .ok_or("目标进程已经退出")?;
+        if process.start_time() != started_at {
+            return Err("目标身份已经变化，请重新查看".into());
+        }
+        let path = process.exe().ok_or("无法读取这个进程的位置")?;
+        let success = std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.to_string_lossy()))
+            .spawn()
+            .is_ok();
+        let message = if success {
+            format!("已经帮你定位到 {}。", process.name().to_string_lossy())
+        } else {
+            "无法打开文件位置。".into()
+        };
+        Ok(ActionResult {
+            action_id: Uuid::new_v4().to_string(),
+            success,
+            message,
+        })
+    }
+
+    pub fn prepare_priority(
+        &mut self,
+        pid: u32,
+        started_at: u64,
+        level: String,
+    ) -> Result<ActionPreview, String> {
+        if !matches!(level.as_str(), "belowNormal" | "normal" | "aboveNormal") {
+            return Err("不支持的优先级".into());
+        }
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let process = self
+            .system
+            .process(Pid::from_u32(pid))
+            .ok_or("目标进程已经退出")?;
+        if process.start_time() != started_at {
+            return Err("目标身份已经变化，请重新查看".into());
+        }
+        let name = process.name().to_string_lossy().into_owned();
+        let critical = is_critical(&name);
+        let target = ProcessSample {
+            pid,
+            started_at,
+            name: name.clone(),
+            cpu_percent: process.cpu_usage(),
+            memory_bytes: process.memory(),
+            is_critical: critical,
+        };
+        let label = match level.as_str() {
+            "belowNormal" => "低于正常",
+            "aboveNormal" => "高于正常",
+            _ => "正常",
+        };
+        let preview = ActionPreview {
+            preview_id: Uuid::new_v4().to_string(),
+            action: "setProcessPriority".into(),
+            risk_level: if critical { "R4" } else { "R1" }.into(),
+            allowed: !critical,
+            title: if critical {
+                "不能调整关键系统进程".into()
+            } else {
+                format!("将 {name} 的优先级设为{label}？")
+            },
+            warning: "优先级会影响 Windows 分配 CPU 的顺序，进程重启后通常恢复默认。".into(),
+            target,
+            expires_at: (now() + PREVIEW_TTL_SECONDS) * 1000,
+        };
+        self.pending.insert(
+            preview.preview_id.clone(),
+            PendingAction {
+                preview: preview.clone(),
+                kind: PendingActionKind::SetPriority(level),
+            },
+        );
+        Ok(preview)
+    }
+
     pub fn prepare_terminate(
         &mut self,
         pid: u32,
@@ -439,6 +593,7 @@ impl Monitor {
             preview.preview_id.clone(),
             PendingAction {
                 preview: preview.clone(),
+                kind: PendingActionKind::Terminate,
             },
         );
         Ok(preview)
@@ -464,14 +619,54 @@ impl Monitor {
         if process.start_time() != target.started_at {
             return Err("目标身份已经变化，操作已取消".into());
         }
-        let success = process.kill();
-        let message = if success {
-            format!(
-                "已向 {} 发送结束请求，我会继续观察资源是否恢复。",
-                target.name
-            )
-        } else {
-            format!("没有成功结束 {}，可能需要管理员权限。", target.name)
+        let (success, message) = match &pending.kind {
+            PendingActionKind::Terminate => {
+                let success = process.kill();
+                let message = if success {
+                    format!(
+                        "已向 {} 发送结束请求，我会继续观察资源是否恢复。",
+                        target.name
+                    )
+                } else {
+                    format!("没有成功结束 {}，可能需要管理员权限。", target.name)
+                };
+                (success, message)
+            }
+            PendingActionKind::SetPriority(level) => {
+                use windows_sys::Win32::{
+                    Foundation::CloseHandle,
+                    System::Threading::{
+                        OpenProcess, SetPriorityClass, ABOVE_NORMAL_PRIORITY_CLASS,
+                        BELOW_NORMAL_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+                        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+                    },
+                };
+                let priority = match level.as_str() {
+                    "belowNormal" => BELOW_NORMAL_PRIORITY_CLASS,
+                    "aboveNormal" => ABOVE_NORMAL_PRIORITY_CLASS,
+                    _ => NORMAL_PRIORITY_CLASS,
+                };
+                let success = unsafe {
+                    let handle = OpenProcess(
+                        PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        target.pid,
+                    );
+                    if handle.is_null() {
+                        false
+                    } else {
+                        let changed = SetPriorityClass(handle, priority) != 0;
+                        CloseHandle(handle);
+                        changed
+                    }
+                };
+                let message = if success {
+                    format!("已调整 {} 的优先级。", target.name)
+                } else {
+                    format!("无法调整 {}，可能需要管理员权限。", target.name)
+                };
+                (success, message)
+            }
         };
         self.push_event("action", &message);
         let action_id = Uuid::new_v4().to_string();
@@ -485,7 +680,7 @@ impl Monitor {
                 &message,
             );
         }
-        if success {
+        if success && matches!(pending.kind, PendingActionKind::Terminate) {
             let baseline_pressure = self
                 .snapshot
                 .as_ref()
@@ -524,12 +719,13 @@ mod tests {
 
     #[test]
     fn high_samples_require_a_full_window() {
+        let required = required_high_samples(2);
         let mut count = 0_u8;
-        for _ in 0..REQUIRED_HIGH_SAMPLES - 1 {
+        for _ in 0..required - 1 {
             count = count.saturating_add(1);
         }
-        assert!(count < REQUIRED_HIGH_SAMPLES);
+        assert!(count < required);
         count = count.saturating_add(1);
-        assert_eq!(count, REQUIRED_HIGH_SAMPLES);
+        assert_eq!(count, required);
     }
 }

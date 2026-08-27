@@ -1,4 +1,4 @@
-use crate::types::{HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent};
+use crate::types::{HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent, UserSettings};
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf};
 
@@ -51,13 +51,21 @@ impl Storage {
                 success INTEGER NOT NULL,
                 result TEXT NOT NULL,
                 verification TEXT
+             );
+             CREATE TABLE IF NOT EXISTS app_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                value_json TEXT NOT NULL
              );",
             )
             .map_err(|error| format!("无法初始化本地记忆：{error}"))?;
         Ok(Self { connection })
     }
 
-    pub fn save_snapshot(&self, snapshot: &SystemSnapshot) -> rusqlite::Result<()> {
+    pub fn save_snapshot(
+        &self,
+        snapshot: &SystemSnapshot,
+        retention_days: u32,
+    ) -> rusqlite::Result<()> {
         self.connection.execute(
             "INSERT INTO system_snapshots (
                 captured_at, cpu_percent, memory_percent, used_memory_bytes,
@@ -76,10 +84,11 @@ impl Storage {
                 snapshot.network_send_bps
             ],
         )?;
-        // 第一版保留 7 天原始快照。
         self.connection.execute(
             "DELETE FROM system_snapshots WHERE captured_at < ?1",
-            params![snapshot.captured_at.saturating_sub(7 * 24 * 60 * 60 * 1000)],
+            params![snapshot
+                .captured_at
+                .saturating_sub(retention_days as u64 * 24 * 60 * 60 * 1000)],
         )?;
         Ok(())
     }
@@ -168,6 +177,36 @@ impl Storage {
             baseline_memory_percent: memory,
         })
     }
+
+    pub fn load_settings(&self) -> UserSettings {
+        self.connection
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|value| serde_json::from_str(&value).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_settings(&self, settings: &UserSettings) -> Result<(), String> {
+        let json = serde_json::to_string(settings).map_err(|error| error.to_string())?;
+        self.connection
+            .execute(
+                "INSERT INTO app_settings (id, value_json) VALUES (1, ?1)
+             ON CONFLICT(id) DO UPDATE SET value_json = excluded.value_json",
+                [json],
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    pub fn clear_memory(&self) -> rusqlite::Result<()> {
+        self.connection.execute_batch(
+            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits;",
+        )
+    }
 }
 
 #[cfg(test)]
@@ -187,5 +226,19 @@ mod tests {
         let loaded = storage.recent_events(10).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].message, "开始巡逻");
+    }
+
+    #[test]
+    fn persists_user_settings() {
+        let storage = Storage::open(PathBuf::from(":memory:")).unwrap();
+        let settings = UserSettings {
+            cpu_threshold: 82.0,
+            low_power_mode: true,
+            ..UserSettings::default()
+        };
+        storage.save_settings(&settings).unwrap();
+        let loaded = storage.load_settings();
+        assert_eq!(loaded.cpu_threshold, 82.0);
+        assert!(loaded.low_power_mode);
     }
 }

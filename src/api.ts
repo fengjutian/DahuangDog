@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport } from "./types";
+import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -36,6 +36,16 @@ export async function getCurrentStatus(): Promise<CurrentStatus> {
 export async function prepareTerminate(pid: number, startedAt: number): Promise<ActionPreview> {
   if (!isTauri()) throw new Error("浏览器预览模式不能执行系统操作");
   return invoke("prepare_terminate_process", { pid, startedAt });
+}
+
+export async function preparePriority(pid: number, startedAt: number, level: "belowNormal" | "normal" | "aboveNormal"): Promise<ActionPreview> {
+  if (!isTauri()) throw new Error("浏览器预览模式不能执行系统操作");
+  return invoke("prepare_process_priority", { pid, startedAt, level });
+}
+
+export async function openProcessLocation(pid: number, startedAt: number): Promise<ActionResult> {
+  if (!isTauri()) throw new Error("浏览器预览模式不能执行系统操作");
+  return invoke("open_process_location", { pid, startedAt });
 }
 
 export async function confirmAction(previewId: string): Promise<ActionResult> {
@@ -76,4 +86,19 @@ export async function getSecurityReport(): Promise<SecurityReport> {
     startupEntries: [{ name: "OneDrive", command: "OneDrive.exe /background", source: "当前用户\\Run", riskLevel: "normal", reasons: [] }]
   };
   return invoke("get_security_report");
+}
+
+const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7 };
+
+export async function getSettings(): Promise<UserSettings> {
+  return isTauri() ? invoke("get_settings") : demoSettings;
+}
+
+export async function saveSettings(settings: UserSettings): Promise<UserSettings> {
+  return isTauri() ? invoke("update_settings", { settings }) : settings;
+}
+
+export async function clearLocalMemory(): Promise<void> {
+  if (!isTauri()) throw new Error("浏览器预览模式没有本地记忆");
+  return invoke("clear_local_memory");
 }
