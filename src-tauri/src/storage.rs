@@ -204,6 +204,31 @@ impl Storage {
         })
     }
 
+    pub fn history_range(&self, range_minutes: u32) -> rusqlite::Result<HistorySummary> {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let since = now_ms.saturating_sub(range_minutes.clamp(1, 10_080) as u64 * 60_000);
+        let bucket = (range_minutes as u64 * 60_000 / 300).max(2_000);
+        let mut statement = self.connection.prepare(
+            "SELECT MAX(captured_at), AVG(cpu_percent), AVG(memory_percent),
+                    AVG(disk_read_bps + disk_write_bps), AVG(network_receive_bps + network_send_bps)
+             FROM system_snapshots WHERE captured_at >= ?1 GROUP BY captured_at / ?2 ORDER BY 1",
+        )?;
+        let points: Vec<MetricPoint> = statement.query_map(params![since, bucket], |row| Ok(MetricPoint {
+            captured_at: row.get(0)?, cpu_percent: row.get(1)?, memory_percent: row.get(2)?,
+            disk_bps: row.get(3)?, network_bps: row.get(4)?,
+        }))?.collect::<rusqlite::Result<_>>()?;
+        let count = points.len().max(1) as u64;
+        Ok(HistorySummary {
+            baseline_cpu_percent: points.iter().map(|p| p.cpu_percent).sum::<f32>() / count as f32,
+            baseline_memory_percent: points.iter().map(|p| p.memory_percent).sum::<f32>() / count as f32,
+            peak_cpu_percent: points.iter().map(|p| p.cpu_percent).fold(0.0, f32::max),
+            peak_memory_percent: points.iter().map(|p| p.memory_percent).fold(0.0, f32::max),
+            average_disk_bps: points.iter().map(|p| p.disk_bps).sum::<u64>() / count,
+            average_network_bps: points.iter().map(|p| p.network_bps).sum::<u64>() / count,
+            points,
+        })
+    }
+
     pub fn load_settings(&self) -> UserSettings {
         self.connection
             .query_row(

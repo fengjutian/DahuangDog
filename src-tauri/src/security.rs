@@ -1,10 +1,11 @@
-use crate::types::{ProgramRisk, SecurityReport, StartupEntry};
+use crate::types::{NetworkConnection, ProgramRisk, ScheduledTask, SecurityReport, StartupEntry, WindowsService};
 use std::{
     collections::HashSet,
     ffi::OsStr,
     mem::size_of,
     os::windows::ffi::OsStrExt,
     path::{Path, PathBuf},
+    process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 use sysinfo::System;
@@ -164,6 +165,49 @@ fn folder_startups() -> Vec<StartupEntry> {
         .collect()
 }
 
+fn network_connections(system: &System) -> Vec<NetworkConnection> {
+    let output = Command::new("netstat.exe").args(["-ano", "-p", "tcp"]).output().ok();
+    let text = output.map(|value| String::from_utf8_lossy(&value.stdout).into_owned()).unwrap_or_default();
+    text.lines().filter_map(|line| {
+        let columns: Vec<_> = line.split_whitespace().collect();
+        if columns.first().copied() != Some("TCP") || columns.len() < 5 { return None; }
+        let pid = columns[4].parse::<u32>().ok()?;
+        let process_name = system.process(sysinfo::Pid::from_u32(pid))
+            .map(|process| process.name().to_string_lossy().into_owned()).unwrap_or_else(|| "未知进程".into());
+        Some(NetworkConnection { protocol: "TCP".into(), local_address: columns[1].into(), remote_address: columns[2].into(), state: columns[3].into(), pid, process_name })
+    }).take(200).collect()
+}
+
+fn scheduled_tasks() -> Vec<ScheduledTask> {
+    let root = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into())).join("System32\\Tasks");
+    fn visit(root: &Path, folder: &Path, result: &mut Vec<ScheduledTask>) {
+        let Ok(entries) = std::fs::read_dir(folder) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() { visit(root, &path, result); }
+            else if let Ok(relative) = path.strip_prefix(root) {
+                result.push(ScheduledTask { name: path.file_name().unwrap_or_default().to_string_lossy().into_owned(), path: relative.to_string_lossy().into_owned() });
+            }
+            if result.len() >= 300 { return; }
+        }
+    }
+    let mut result = Vec::new(); visit(&root, &root, &mut result); result
+}
+
+fn windows_services() -> Vec<WindowsService> {
+    let root = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let Ok(services) = root.open_subkey(r"SYSTEM\CurrentControlSet\Services") else { return vec![] };
+    services.enum_keys().flatten().filter_map(|name| {
+        let service = services.open_subkey(&name).ok()?;
+        let service_type: u32 = service.get_value("Type").unwrap_or(0);
+        if service_type & 0x30 == 0 { return None; }
+        let start: u32 = service.get_value("Start").unwrap_or(3);
+        let start_mode = match start { 0 => "引导", 1 => "系统", 2 => "自动", 3 => "手动", 4 => "禁用", _ => "未知" }.into();
+        let image_path = service.get_value::<String, _>("ImagePath").unwrap_or_default();
+        Some(WindowsService { name, start_mode, image_path })
+    }).take(500).collect()
+}
+
 pub fn scan_security() -> Result<SecurityReport, String> {
     let system = System::new_all();
     let mut seen = HashSet::new();
@@ -209,6 +253,9 @@ pub fn scan_security() -> Result<SecurityReport, String> {
     let security_score = 100usize
         .saturating_sub(medium_risk_count * 12)
         .saturating_sub(low_risk_count.min(10) * 2) as u8;
+    let network_connections = network_connections(&system);
+    let scheduled_tasks = scheduled_tasks();
+    let windows_services = windows_services();
     Ok(SecurityReport {
         scanned_at: now_ms(),
         scanned_programs: programs.len(),
@@ -227,6 +274,9 @@ pub fn scan_security() -> Result<SecurityReport, String> {
         security_score,
         medium_risk_count,
         low_risk_count,
+        network_connections,
+        scheduled_tasks,
+        windows_services,
     })
 }
 

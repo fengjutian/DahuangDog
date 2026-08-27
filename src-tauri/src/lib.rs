@@ -63,6 +63,11 @@ fn get_history(state: tauri::State<'_, SharedMonitor>) -> Result<HistorySummary,
 }
 
 #[tauri::command]
+fn get_history_range(range_minutes: u32, state: tauri::State<'_, SharedMonitor>) -> Result<HistorySummary, String> {
+    state.lock().map_err(|_| "监控状态暂时不可用".to_string())?.history_range(range_minutes)
+}
+
+#[tauri::command]
 fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalDiagnosis, String> {
     Ok(state
         .lock()
@@ -167,6 +172,7 @@ pub fn run() {
             prepare_terminate_process,
             confirm_action,
             get_history,
+            get_history_range,
             diagnose_performance,
             get_security_report,
             get_settings,

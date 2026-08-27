@@ -777,6 +777,11 @@ impl Monitor {
             .map_err(|error| format!("读取历史失败：{error}"))
     }
 
+    pub fn history_range(&self, range_minutes: u32) -> Result<HistorySummary, String> {
+        self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?
+            .history_range(range_minutes).map_err(|error| format!("读取趋势失败：{error}"))
+    }
+
     pub fn diagnose(&self) -> LocalDiagnosis {
         let Some(snapshot) = &self.snapshot else {
             return LocalDiagnosis {
