@@ -6,6 +6,8 @@ mod types;
 use monitor::Monitor;
 use std::{
     collections::HashSet,
+    path::PathBuf,
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -78,6 +80,26 @@ fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalD
 #[tauri::command]
 fn get_security_report() -> Result<SecurityReport, String> {
     security::scan_security()
+}
+
+#[tauri::command]
+fn open_file_location(path: String) -> Result<ActionResult, String> {
+    let target = PathBuf::from(path);
+    if !target.is_absolute() {
+        return Err("只能打开绝对文件路径".into());
+    }
+    if !target.is_file() {
+        return Err("文件已经不存在或暂时无法访问".into());
+    }
+    Command::new("explorer.exe")
+        .arg(format!("/select,{}", target.display()))
+        .spawn()
+        .map_err(|error| format!("无法打开文件位置：{error}"))?;
+    Ok(ActionResult {
+        action_id: uuid::Uuid::new_v4().to_string(),
+        success: true,
+        message: "已经在资源管理器中定位文件".into(),
+    })
 }
 
 #[tauri::command]
@@ -175,6 +197,7 @@ pub fn run() {
             get_history_range,
             diagnose_performance,
             get_security_report,
+            open_file_location,
             get_settings,
             update_settings,
             clear_local_memory,

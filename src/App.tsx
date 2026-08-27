@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openFileLocation, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
 import type { ActionPreview, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
@@ -75,6 +75,7 @@ export default function App() {
   const [usageQuery, setUsageQuery] = useState("");
   const [usageTab, setUsageTab] = useState<"charts" | "list">("charts");
   const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
+  const [securityTab, setSecurityTab] = useState<"overview" | "programs" | "startup" | "network" | "tasks" | "services">("overview");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -143,6 +144,11 @@ export default function App() {
     try { setSecurity(await getSecurityReport()); }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
+  }
+
+  async function revealSecurityFile(path: string) {
+    try { const result = await openFileLocation(path); setMessage(result.message); }
+    catch (error) { setMessage(String(error)); }
   }
 
   async function persistSettings() {
@@ -239,7 +245,10 @@ export default function App() {
     {security && <div className="modal-backdrop" onClick={() => setSecurity(null)}><section className="modal report-modal security-report" onClick={e => e.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">只读安全扫描</span><h3>🛡️ 看门报告</h3></div><button className="modal-close" onClick={() => setSecurity(null)} aria-label="关闭看门报告">×</button></div>
       <div className="report-scroll">
-        <div className="security-scoreboard">
+        <div className="report-tabs" role="tablist" aria-label="安全报告分类">
+          {([['overview','概览'],['programs','运行程序'],['startup','启动项'],['network','网络连接'],['tasks','计划任务'],['services','Windows 服务']] as const).map(([key, label]) => <button key={key} role="tab" aria-selected={securityTab === key} className={securityTab === key ? "active" : ""} onClick={() => setSecurityTab(key)}>{label}</button>)}
+        </div>
+        {securityTab === "overview" && <div className="security-tab-panel"><div className="security-scoreboard">
           <div className={`security-score ${security.securityScore < 70 ? "attention" : ""}`}><strong>{security.securityScore}</strong><span>安全分</span></div>
           <div><b>{security.mediumRiskCount}</b><span>需要确认</span></div>
           <div><b>{security.lowRiskCount}</b><span>低风险信号</span></div>
@@ -248,16 +257,19 @@ export default function App() {
         <div className="security-inventory"><span><b>{security.networkConnections.length}</b> TCP 连接</span><span><b>{security.scheduledTasks.length}</b> 计划任务</span><span><b>{security.windowsServices.length}</b> Windows 服务</span></div>
         <div className="security-summary"><b>{security.summary}</b><span>扫描于 {new Date(security.scannedAt).toLocaleString("zh-CN")} · {security.startupEntries.length} 个启动项</span></div>
         <p className="security-note">未验证不等于恶意程序。大黄狗只展示客观信号，请结合来源和用途判断。</p>
+        </div>}
+        {securityTab === "programs" && <div className="security-tab-panel">
         <div className="report-filters"><button className={securityFilter === "all" ? "active" : ""} onClick={() => setSecurityFilter("all")}>全部</button><button className={securityFilter === "medium" ? "active" : ""} onClick={() => setSecurityFilter("medium")}>需要确认</button><button className={securityFilter === "low" ? "active" : ""} onClick={() => setSecurityFilter("low")}>低风险</button></div>
         {visiblePrograms.length > 0 && <div className="security-group"><h4>运行中的程序</h4>{visiblePrograms.map(program => <article className="security-item" key={`${program.pid}-${program.path}`}>
-          <span className={`risk-pill ${program.riskLevel}`}>{program.riskLevel === "medium" ? "需确认" : "低风险"}</span><div><b>{program.name}</b><code>{program.path}</code><small>{program.reasons.length ? program.reasons.join(" · ") : "未发现额外风险信号"}</small></div><span>{program.signatureStatus === "valid" ? "✓ 签名有效" : "? 签名未验证"}</span>
+          <span className={`risk-pill ${program.riskLevel}`}>{program.riskLevel === "medium" ? "需确认" : "低风险"}</span><div><b>{program.name}</b><code title={program.path}>{program.path}</code><small>{program.reasons.length ? program.reasons.join(" · ") : "未发现额外风险信号"}</small></div><span>{program.signatureStatus === "valid" ? "✓ 签名有效" : "? 签名未验证"}</span><button className="reveal-file" onClick={() => revealSecurityFile(program.path)} title="在资源管理器中定位文件">打开位置</button>
         </article>)}</div>}
-        <div className="security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
+        {!visiblePrograms.length && <p className="empty">当前筛选条件下没有程序。</p>}</div>}
+        {securityTab === "startup" && <div className="security-tab-panel security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
           <span className={`risk-pill ${entry.riskLevel}`}>{entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>
-        </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>
-        <div className="security-group"><h4>监听端口与网络连接</h4>{security.networkConnections.slice(0, 80).map(connection => <article className="inventory-row" key={`${connection.protocol}-${connection.localAddress}-${connection.remoteAddress}-${connection.pid}`}><b>{connection.processName}</b><code>{connection.localAddress} → {connection.remoteAddress}</code><span>PID {connection.pid} · {connection.state}</span></article>)}{!security.networkConnections.length && <p className="empty">没有读取到 TCP 连接。</p>}</div>
-        <div className="security-group"><h4>计划任务</h4>{security.scheduledTasks.slice(0, 80).map(task => <article className="inventory-row" key={task.path}><b>{task.name}</b><code>{task.path}</code></article>)}{!security.scheduledTasks.length && <p className="empty">没有读取到计划任务，部分目录可能需要管理员权限。</p>}</div>
-        <div className="security-group"><h4>Windows 服务</h4>{security.windowsServices.slice(0, 100).map(service => <article className="inventory-row" key={service.name}><b>{service.name}</b><code>{service.imagePath || "系统驱动或未设置路径"}</code><span>{service.startMode}</span></article>)}</div>
+        </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>}
+        {securityTab === "network" && <div className="security-tab-panel security-group"><h4>监听端口与网络连接</h4>{security.networkConnections.map(connection => <article className="inventory-row" key={`${connection.protocol}-${connection.localAddress}-${connection.remoteAddress}-${connection.pid}`}><b>{connection.processName}</b><code>{connection.localAddress} → {connection.remoteAddress}</code><span>PID {connection.pid} · {connection.state}</span></article>)}{!security.networkConnections.length && <p className="empty">没有读取到 TCP 连接。</p>}</div>}
+        {securityTab === "tasks" && <div className="security-tab-panel security-group"><h4>计划任务</h4>{security.scheduledTasks.map(task => <article className="inventory-row" key={task.path}><b>{task.name}</b><code>{task.path}</code></article>)}{!security.scheduledTasks.length && <p className="empty">没有读取到计划任务，部分目录可能需要管理员权限。</p>}</div>}
+        {securityTab === "services" && <div className="security-tab-panel security-group"><h4>Windows 服务</h4>{security.windowsServices.map(service => <article className="inventory-row" key={service.name}><b>{service.name}</b><code>{service.imagePath || "系统驱动或未设置路径"}</code><span>{service.startMode}</span></article>)}</div>}
       </div>
     </section></div>}
     {usage && <div className="modal-backdrop" onClick={() => setUsage(null)}><section className="modal report-modal usage-report" onClick={e => e.stopPropagation()}>

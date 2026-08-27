@@ -105,6 +105,11 @@ export async function getSecurityReport(): Promise<SecurityReport> {
   return invoke("get_security_report");
 }
 
+export async function openFileLocation(path: string): Promise<ActionResult> {
+  if (!isTauri()) throw new Error("浏览器预览模式不能打开本机文件位置");
+  return invoke("open_file_location", { path });
+}
+
 const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7 };
 
 export async function getSettings(): Promise<UserSettings> {
