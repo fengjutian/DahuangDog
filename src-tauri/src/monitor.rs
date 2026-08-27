@@ -230,7 +230,7 @@ pub struct Monitor {
     system: System,
     disks: Disks,
     networks: Networks,
-    components: Components,
+    components: Option<Components>,
     storage: Option<Storage>,
     snapshot: Option<SystemSnapshot>,
     findings: Vec<Finding>,
@@ -265,7 +265,7 @@ impl Monitor {
             system: System::new_all(),
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
-            components: Components::new_with_refreshed_list(),
+            components: None,
             storage,
             snapshot: None,
             findings: vec![],
@@ -291,7 +291,6 @@ impl Monitor {
             }
         }
         monitor.push_event("patrol", "大黄狗醒了，开始巡逻");
-        monitor.refresh();
         monitor
     }
 
@@ -301,7 +300,11 @@ impl Monitor {
         self.system.refresh_processes(ProcessesToUpdate::All, true);
         self.disks.refresh(true);
         self.networks.refresh(true);
-        self.components.refresh(true);
+        if let Some(components) = &mut self.components {
+            components.refresh(true);
+        } else {
+            self.components = Some(Components::new_with_refreshed_list());
+        }
 
         let total = self.system.total_memory();
         let used = self.system.used_memory();
@@ -375,7 +378,7 @@ impl Monitor {
             cpu_cores: self.system.cpus().iter().enumerate().map(|(index, cpu)| CpuCoreMetric { name: format!("核心 {}", index + 1), usage_percent: cpu.cpu_usage(), frequency_mhz: cpu.frequency() }).collect(),
             gpus,
             battery: battery_metric(),
-            temperatures: self.components.list().iter().filter_map(|item| item.temperature().map(|celsius| TemperatureMetric { label: item.label().into(), celsius, max_celsius: item.max() })).collect(),
+            temperatures: self.components.as_ref().map(|components| components.list().iter().filter_map(|item| item.temperature().map(|celsius| TemperatureMetric { label: item.label().into(), celsius, max_celsius: item.max() })).collect()).unwrap_or_default(),
             fans: Vec::<FanMetric>::new(),
             disks: self.disks.list().iter().map(|disk| { let usage = disk.usage(); DiskMetric { name: disk.name().to_string_lossy().into_owned(), mount_point: disk.mount_point().to_string_lossy().into_owned(), total_bytes: disk.total_space(), available_bytes: disk.available_space(), read_bps: usage.read_bytes / self.sampling_interval_seconds().max(1), write_bps: usage.written_bytes / self.sampling_interval_seconds().max(1) } }).collect(),
             networks: self.networks.iter().map(|(name, data)| NetworkMetric { name: name.clone(), received_bps: data.received() / self.sampling_interval_seconds().max(1), transmitted_bps: data.transmitted() / self.sampling_interval_seconds().max(1) }).collect(),
