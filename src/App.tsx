@@ -171,7 +171,7 @@ export default function App() {
 
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
-  const visibleUsage = usage?.filter(record => record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
+  const visibleUsage = usage?.filter(record => record.foregroundSeconds > 0 && record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
   const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
 
   return <main className="shell">
@@ -261,6 +261,7 @@ export default function App() {
     </section></div>}
     {usage && <div className="modal-backdrop" onClick={() => setUsage(null)}><section className="modal report-modal usage-report" onClick={e => e.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">应用生命周期</span><h3>⏱ 使用记录</h3></div><button className="modal-close" onClick={() => setUsage(null)} aria-label="关闭使用记录">×</button></div>
+      <div className="usage-content report-scroll">
       <p className="security-note">启动与运行时间来自进程生命周期；前台使用时间从大黄狗首次观察后累计。</p>
       {usageSummary && <>
         <div className="usage-summary">
@@ -274,12 +275,13 @@ export default function App() {
       </>}
       <input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" />
       <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>
-      <div className="usage-list report-scroll">{visibleUsage.map(record => <article key={record.sessionId} className="usage-row">
+      <div className="usage-list">{visibleUsage.map(record => <article key={record.sessionId} className="usage-row">
         <div><b>{record.name}</b><small>PID {record.rootPid} · 峰值 {record.memberPeak} 个进程</small></div>
         <div><span>{new Date(record.startedAt).toLocaleString("zh-CN")}</span><small>{record.isRunning ? "仍在运行" : record.closedAt ? `关闭于 ${new Date(record.closedAt).toLocaleString("zh-CN")}` : "关闭时间未知"}</small></div>
         <div><b>{formatDuration(record.runtimeSeconds)}</b><small>后台 {formatDuration(record.backgroundSeconds)}</small></div>
         <div><b>{formatDuration(record.foregroundSeconds)}</b><small>{record.isRunning ? "● 活跃会话" : "已结束"}</small></div>
       </article>)}{!visibleUsage.length && <p className="empty">没有匹配的应用使用记录。</p>}</div>
+      </div>
     </section></div>}
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>
       <span className="risk">进程操作</span><h3>{selected.name}</h3><p>PID {selected.pid} · CPU {selected.cpuPercent.toFixed(1)}% · {formatBytes(selected.memoryBytes)}</p>

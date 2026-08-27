@@ -949,6 +949,7 @@ impl Monitor {
             cpu_percent: process.cpu_usage(),
             memory_bytes: process.memory(),
             is_critical: critical,
+            thread_count: 0,
         };
         let label = match level.as_str() {
             "belowNormal" => "低于正常",
@@ -1002,6 +1003,7 @@ impl Monitor {
             cpu_percent: process.cpu_usage(),
             memory_bytes: process.memory(),
             is_critical: critical,
+            thread_count: 0,
         };
         let preview = ActionPreview {
             preview_id: Uuid::new_v4().to_string(),
@@ -1171,6 +1173,7 @@ mod tests {
             cpu_percent: cpu,
             memory_bytes: memory,
             is_critical: false,
+            thread_count: 1,
         };
         let groups = build_application_groups(&[
             sample(10, None, "chrome.exe", 5.0, 100),

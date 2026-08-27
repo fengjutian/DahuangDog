@@ -305,7 +305,10 @@ impl Storage {
     pub fn recent_app_sessions(&self, limit: u32) -> rusqlite::Result<Vec<AppUsageRecord>> {
         let mut statement = self.connection.prepare(
             "SELECT session_id, name, root_pid, started_at, first_seen_at, last_seen_at,
-                    closed_at, runtime_seconds, foreground_seconds, background_seconds,
+                    closed_at,
+                    CASE WHEN runtime_seconds <= 31536000 THEN runtime_seconds ELSE MAX(0, (last_seen_at - first_seen_at) / 1000) END,
+                    foreground_seconds,
+                    MIN(background_seconds, MAX(0, (last_seen_at - first_seen_at) / 1000)),
                     member_peak, is_running
              FROM app_sessions ORDER BY is_running DESC, last_seen_at DESC LIMIT ?1",
         )?;
@@ -337,9 +340,11 @@ impl Storage {
             .as_millis() as u64
             - period_days as u64 * 24 * 60 * 60 * 1000;
         let mut statement = self.connection.prepare(
-            "SELECT name, COUNT(*), SUM(runtime_seconds), SUM(foreground_seconds),
-                    SUM(background_seconds)
-             FROM app_sessions WHERE last_seen_at >= ?1
+            "SELECT name, COUNT(*),
+                    SUM(CASE WHEN runtime_seconds <= 31536000 THEN runtime_seconds ELSE MAX(0, (last_seen_at - first_seen_at) / 1000) END),
+                    SUM(foreground_seconds),
+                    SUM(MIN(background_seconds, MAX(0, (last_seen_at - first_seen_at) / 1000)))
+             FROM app_sessions WHERE last_seen_at >= ?1 AND foreground_seconds > 0
              GROUP BY LOWER(name) ORDER BY SUM(foreground_seconds) DESC",
         )?;
         let top_apps: Vec<AppUsageAggregate> = statement
@@ -356,7 +361,7 @@ impl Storage {
         let mut daily_statement = self.connection.prepare(
             "SELECT strftime('%Y-%m-%d', last_seen_at / 1000, 'unixepoch', 'localtime'),
                     SUM(foreground_seconds), COUNT(*)
-             FROM app_sessions WHERE last_seen_at >= ?1 GROUP BY 1 ORDER BY 1",
+             FROM app_sessions WHERE last_seen_at >= ?1 AND foreground_seconds > 0 GROUP BY 1 ORDER BY 1",
         )?;
         let daily_usage = daily_statement.query_map([since], |row| Ok(DailyUsage {
             date: row.get(0)?, foreground_seconds: row.get(1)?, launch_count: row.get(2)?,
