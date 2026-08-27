@@ -1,5 +1,11 @@
-use crate::types::{ActionPreview, ActionResult, CurrentStatus, Finding, ProcessSample, SystemSnapshot, TimelineEvent};
-use std::{collections::{HashMap, VecDeque}, time::{SystemTime, UNIX_EPOCH}};
+use crate::types::{
+    ActionPreview, ActionResult, CurrentStatus, Finding, ProcessSample, SystemSnapshot,
+    TimelineEvent,
+};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
 
@@ -8,20 +14,35 @@ const HIGH_MEMORY_PERCENT: f32 = 90.0;
 const REQUIRED_HIGH_SAMPLES: u8 = 30;
 const PREVIEW_TTL_SECONDS: u64 = 30;
 const CRITICAL_PROCESSES: &[&str] = &[
-    "system", "system idle process", "registry", "smss.exe", "csrss.exe",
-    "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe", "dwm.exe",
+    "system",
+    "system idle process",
+    "registry",
+    "smss.exe",
+    "csrss.exe",
+    "wininit.exe",
+    "services.exe",
+    "lsass.exe",
+    "winlogon.exe",
+    "dwm.exe",
 ];
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn is_critical(name: &str) -> bool {
-    CRITICAL_PROCESSES.iter().any(|candidate| candidate.eq_ignore_ascii_case(name))
+    CRITICAL_PROCESSES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
 #[derive(Clone)]
-struct PendingAction { preview: ActionPreview }
+struct PendingAction {
+    preview: ActionPreview,
+}
 
 pub struct Monitor {
     system: System,
@@ -36,9 +57,13 @@ pub struct Monitor {
 impl Monitor {
     pub fn new() -> Self {
         let mut monitor = Self {
-            system: System::new_all(), snapshot: None, findings: vec![],
-            timeline: VecDeque::new(), pending: HashMap::new(),
-            high_cpu_samples: 0, high_memory_samples: 0,
+            system: System::new_all(),
+            snapshot: None,
+            findings: vec![],
+            timeline: VecDeque::new(),
+            pending: HashMap::new(),
+            high_cpu_samples: 0,
+            high_memory_samples: 0,
         };
         monitor.push_event("patrol", "大黄狗醒了，开始巡逻");
         monitor.refresh();
@@ -52,14 +77,27 @@ impl Monitor {
 
         let total = self.system.total_memory();
         let used = self.system.used_memory();
-        let memory_percent = if total == 0 { 0.0 } else { used as f32 / total as f32 * 100.0 };
-        let mut processes: Vec<_> = self.system.processes().iter().map(|(pid, process)| {
-            let name = process.name().to_string_lossy().into_owned();
-            ProcessSample {
-                pid: pid.as_u32(), started_at: process.start_time(), name: name.clone(),
-                cpu_percent: process.cpu_usage(), memory_bytes: process.memory(), is_critical: is_critical(&name),
-            }
-        }).collect();
+        let memory_percent = if total == 0 {
+            0.0
+        } else {
+            used as f32 / total as f32 * 100.0
+        };
+        let mut processes: Vec<_> = self
+            .system
+            .processes()
+            .iter()
+            .map(|(pid, process)| {
+                let name = process.name().to_string_lossy().into_owned();
+                ProcessSample {
+                    pid: pid.as_u32(),
+                    started_at: process.start_time(),
+                    name: name.clone(),
+                    cpu_percent: process.cpu_usage(),
+                    memory_bytes: process.memory(),
+                    is_critical: is_critical(&name),
+                }
+            })
+            .collect();
         processes.sort_by(|a, b| {
             let a_score = a.cpu_percent as f64 * 100_000_000.0 + a.memory_bytes as f64;
             let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
@@ -69,89 +107,206 @@ impl Monitor {
 
         let snapshot = SystemSnapshot {
             captured_at: now() * 1000,
-            cpu_percent: self.system.global_cpu_usage(), memory_percent,
-            used_memory_bytes: used, total_memory_bytes: total, processes,
+            cpu_percent: self.system.global_cpu_usage(),
+            memory_percent,
+            used_memory_bytes: used,
+            total_memory_bytes: total,
+            processes,
         };
         self.update_detector(&snapshot);
         self.snapshot = Some(snapshot);
-        self.pending.retain(|_, action| action.preview.expires_at >= now() * 1000);
+        self.pending
+            .retain(|_, action| action.preview.expires_at >= now() * 1000);
     }
 
     fn update_detector(&mut self, snapshot: &SystemSnapshot) {
-        self.high_cpu_samples = if snapshot.cpu_percent >= HIGH_CPU_PERCENT { self.high_cpu_samples.saturating_add(1) } else { 0 };
-        self.high_memory_samples = if snapshot.memory_percent >= HIGH_MEMORY_PERCENT { self.high_memory_samples.saturating_add(1) } else { 0 };
-        if self.high_cpu_samples >= REQUIRED_HIGH_SAMPLES && !self.findings.iter().any(|f| f.kind == "cpu.sustained_high") {
+        self.high_cpu_samples = if snapshot.cpu_percent >= HIGH_CPU_PERCENT {
+            self.high_cpu_samples.saturating_add(1)
+        } else {
+            0
+        };
+        self.high_memory_samples = if snapshot.memory_percent >= HIGH_MEMORY_PERCENT {
+            self.high_memory_samples.saturating_add(1)
+        } else {
+            0
+        };
+        if self.high_cpu_samples >= REQUIRED_HIGH_SAMPLES
+            && !self.findings.iter().any(|f| f.kind == "cpu.sustained_high")
+        {
             let process = snapshot.processes.first().cloned();
-            self.add_finding("cpu.sustained_high", "CPU 一直很忙", format!("CPU 已持续约 1 分钟高于 {:.0}%", HIGH_CPU_PERCENT), snapshot.cpu_percent, process);
+            self.add_finding(
+                "cpu.sustained_high",
+                "CPU 一直很忙",
+                format!("CPU 已持续约 1 分钟高于 {:.0}%", HIGH_CPU_PERCENT),
+                snapshot.cpu_percent,
+                process,
+            );
         }
-        if self.high_memory_samples >= REQUIRED_HIGH_SAMPLES && !self.findings.iter().any(|f| f.kind == "memory.pressure") {
-            let process = snapshot.processes.iter().max_by_key(|p| p.memory_bytes).cloned();
-            self.add_finding("memory.pressure", "电脑内存有点挤", format!("内存已持续约 1 分钟高于 {:.0}%", HIGH_MEMORY_PERCENT), snapshot.memory_percent, process);
+        if self.high_memory_samples >= REQUIRED_HIGH_SAMPLES
+            && !self.findings.iter().any(|f| f.kind == "memory.pressure")
+        {
+            let process = snapshot
+                .processes
+                .iter()
+                .max_by_key(|p| p.memory_bytes)
+                .cloned();
+            self.add_finding(
+                "memory.pressure",
+                "电脑内存有点挤",
+                format!("内存已持续约 1 分钟高于 {:.0}%", HIGH_MEMORY_PERCENT),
+                snapshot.memory_percent,
+                process,
+            );
         }
         let cpu_recovered = snapshot.cpu_percent < 70.0;
         let memory_recovered = snapshot.memory_percent < 80.0;
         let before = self.findings.len();
-        self.findings.retain(|f| !(f.kind == "cpu.sustained_high" && cpu_recovered || f.kind == "memory.pressure" && memory_recovered));
-        if before > self.findings.len() { self.push_event("resolved", "刚才的资源压力已经恢复"); }
+        self.findings.retain(|f| {
+            !(f.kind == "cpu.sustained_high" && cpu_recovered
+                || f.kind == "memory.pressure" && memory_recovered)
+        });
+        if before > self.findings.len() {
+            self.push_event("resolved", "刚才的资源压力已经恢复");
+        }
     }
 
-    fn add_finding(&mut self, kind: &str, title: &str, message: String, value: f32, process: Option<ProcessSample>) {
+    fn add_finding(
+        &mut self,
+        kind: &str,
+        title: &str,
+        message: String,
+        value: f32,
+        process: Option<ProcessSample>,
+    ) {
         self.findings.push(Finding {
-            id: Uuid::new_v4().to_string(), kind: kind.into(), severity: "warning".into(),
-            title: title.into(), message: message.clone(), first_seen_at: now() * 1000,
-            evidence: vec![format!("当前读数 {:.1}%", value), "已排除短时尖峰".into()], process,
+            id: Uuid::new_v4().to_string(),
+            kind: kind.into(),
+            severity: "warning".into(),
+            title: title.into(),
+            message: message.clone(),
+            first_seen_at: now() * 1000,
+            evidence: vec![format!("当前读数 {:.1}%", value), "已排除短时尖峰".into()],
+            process,
         });
         self.push_event("finding", &format!("发现异常：{title}。正在调查原因"));
     }
 
     fn push_event(&mut self, kind: &str, message: &str) {
-        self.timeline.push_front(TimelineEvent { id: Uuid::new_v4().to_string(), occurred_at: now() * 1000, kind: kind.into(), message: message.into() });
+        self.timeline.push_front(TimelineEvent {
+            id: Uuid::new_v4().to_string(),
+            occurred_at: now() * 1000,
+            kind: kind.into(),
+            message: message.into(),
+        });
         self.timeline.truncate(50);
     }
 
     pub fn status(&self) -> CurrentStatus {
         let (dog_state, summary) = if self.findings.is_empty() {
             ("patrol", "我正在巡逻，一切看起来都好。")
-        } else { ("investigating", "我闻到一点异常，已经找到最可疑的目标。") };
+        } else {
+            ("investigating", "我闻到一点异常，已经找到最可疑的目标。")
+        };
         let snapshot = self.snapshot.clone();
-        let pressure = snapshot.as_ref().map(|s| s.cpu_percent.max(s.memory_percent)).unwrap_or(0.0);
+        let pressure = snapshot
+            .as_ref()
+            .map(|s| s.cpu_percent.max(s.memory_percent))
+            .unwrap_or(0.0);
         CurrentStatus {
-            dog_state: dog_state.into(), summary: summary.into(),
+            dog_state: dog_state.into(),
+            summary: summary.into(),
             health_score: (100.0 - pressure * 0.55).clamp(0.0, 100.0) as u8,
-            snapshot, findings: self.findings.clone(), timeline: self.timeline.iter().cloned().collect(),
+            snapshot,
+            findings: self.findings.clone(),
+            timeline: self.timeline.iter().cloned().collect(),
         }
     }
 
-    pub fn prepare_terminate(&mut self, pid: u32, started_at: u64) -> Result<ActionPreview, String> {
+    pub fn prepare_terminate(
+        &mut self,
+        pid: u32,
+        started_at: u64,
+    ) -> Result<ActionPreview, String> {
         self.system.refresh_processes(ProcessesToUpdate::All, true);
-        let process = self.system.process(Pid::from_u32(pid)).ok_or("目标进程已经退出")?;
-        if process.start_time() != started_at { return Err("目标身份已经变化，请重新查看后再操作".into()); }
+        let process = self
+            .system
+            .process(Pid::from_u32(pid))
+            .ok_or("目标进程已经退出")?;
+        if process.start_time() != started_at {
+            return Err("目标身份已经变化，请重新查看后再操作".into());
+        }
         let name = process.name().to_string_lossy().into_owned();
         let critical = is_critical(&name);
-        let target = ProcessSample { pid, started_at, name: name.clone(), cpu_percent: process.cpu_usage(), memory_bytes: process.memory(), is_critical: critical };
-        let preview = ActionPreview {
-            preview_id: Uuid::new_v4().to_string(), action: "terminateProcess".into(),
-            risk_level: if critical { "R4" } else { "R2" }.into(), allowed: !critical,
-            title: if critical { "这个进程不能直接结束".into() } else { format!("要结束 {name} 吗？") },
-            warning: if critical { "它属于 Windows 关键组件，强行结束可能导致系统不稳定。".into() } else { "未保存的内容可能丢失。大黄狗只会处理这一个经过校验的进程。".into() },
-            target, expires_at: (now() + PREVIEW_TTL_SECONDS) * 1000,
+        let target = ProcessSample {
+            pid,
+            started_at,
+            name: name.clone(),
+            cpu_percent: process.cpu_usage(),
+            memory_bytes: process.memory(),
+            is_critical: critical,
         };
-        self.pending.insert(preview.preview_id.clone(), PendingAction { preview: preview.clone() });
+        let preview = ActionPreview {
+            preview_id: Uuid::new_v4().to_string(),
+            action: "terminateProcess".into(),
+            risk_level: if critical { "R4" } else { "R2" }.into(),
+            allowed: !critical,
+            title: if critical {
+                "这个进程不能直接结束".into()
+            } else {
+                format!("要结束 {name} 吗？")
+            },
+            warning: if critical {
+                "它属于 Windows 关键组件，强行结束可能导致系统不稳定。".into()
+            } else {
+                "未保存的内容可能丢失。大黄狗只会处理这一个经过校验的进程。".into()
+            },
+            target,
+            expires_at: (now() + PREVIEW_TTL_SECONDS) * 1000,
+        };
+        self.pending.insert(
+            preview.preview_id.clone(),
+            PendingAction {
+                preview: preview.clone(),
+            },
+        );
         Ok(preview)
     }
 
     pub fn confirm_action(&mut self, preview_id: &str) -> Result<ActionResult, String> {
-        let pending = self.pending.remove(preview_id).ok_or("确认已失效，请重新发起操作")?;
-        if pending.preview.expires_at < now() * 1000 { return Err("确认已过期，请重新检查目标".into()); }
-        if !pending.preview.allowed || pending.preview.target.is_critical { return Err("安全策略拒绝了这个操作".into()); }
+        let pending = self
+            .pending
+            .remove(preview_id)
+            .ok_or("确认已失效，请重新发起操作")?;
+        if pending.preview.expires_at < now() * 1000 {
+            return Err("确认已过期，请重新检查目标".into());
+        }
+        if !pending.preview.allowed || pending.preview.target.is_critical {
+            return Err("安全策略拒绝了这个操作".into());
+        }
         let target = &pending.preview.target;
         self.system.refresh_processes(ProcessesToUpdate::All, true);
-        let process = self.system.process(Pid::from_u32(target.pid)).ok_or("目标进程已经退出")?;
-        if process.start_time() != target.started_at { return Err("目标身份已经变化，操作已取消".into()); }
+        let process = self
+            .system
+            .process(Pid::from_u32(target.pid))
+            .ok_or("目标进程已经退出")?;
+        if process.start_time() != target.started_at {
+            return Err("目标身份已经变化，操作已取消".into());
+        }
         let success = process.kill();
-        let message = if success { format!("已向 {} 发送结束请求，我会继续观察资源是否恢复。", target.name) } else { format!("没有成功结束 {}，可能需要管理员权限。", target.name) };
+        let message = if success {
+            format!(
+                "已向 {} 发送结束请求，我会继续观察资源是否恢复。",
+                target.name
+            )
+        } else {
+            format!("没有成功结束 {}，可能需要管理员权限。", target.name)
+        };
         self.push_event("action", &message);
-        Ok(ActionResult { action_id: Uuid::new_v4().to_string(), success, message })
+        Ok(ActionResult {
+            action_id: Uuid::new_v4().to_string(),
+            success,
+            message,
+        })
     }
 }
 
@@ -168,7 +323,9 @@ mod tests {
     #[test]
     fn high_samples_require_a_full_window() {
         let mut count = 0_u8;
-        for _ in 0..REQUIRED_HIGH_SAMPLES - 1 { count = count.saturating_add(1); }
+        for _ in 0..REQUIRED_HIGH_SAMPLES - 1 {
+            count = count.saturating_add(1);
+        }
         assert!(count < REQUIRED_HIGH_SAMPLES);
         count = count.saturating_add(1);
         assert_eq!(count, REQUIRED_HIGH_SAMPLES);
