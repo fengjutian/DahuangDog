@@ -73,6 +73,7 @@ export default function App() {
   const [usage, setUsage] = useState<AppUsageRecord[] | null>(null);
   const [usageSummary, setUsageSummary] = useState<AppUsageSummary | null>(null);
   const [usageQuery, setUsageQuery] = useState("");
+  const [usageTab, setUsageTab] = useState<"charts" | "list">("charts");
   const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
 
   const refresh = useCallback(async () => {
@@ -171,7 +172,7 @@ export default function App() {
 
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
-  const visibleUsage = usage?.filter(record => record.foregroundSeconds > 0 && record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
+  const visibleUsage = usage?.filter(record => record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
   const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
 
   return <main className="shell">
@@ -263,7 +264,11 @@ export default function App() {
       <div className="section-title"><div><span className="eyebrow">应用生命周期</span><h3>⏱ 使用记录</h3></div><button className="modal-close" onClick={() => setUsage(null)} aria-label="关闭使用记录">×</button></div>
       <div className="usage-content report-scroll">
       <p className="security-note">启动与运行时间来自进程生命周期；前台使用时间从大黄狗首次观察后累计。</p>
-      {usageSummary && <>
+      <div className="usage-tabs" role="tablist" aria-label="使用记录视图">
+        <button role="tab" aria-selected={usageTab === "charts"} className={usageTab === "charts" ? "active" : ""} onClick={() => setUsageTab("charts")}>图形统计</button>
+        <button role="tab" aria-selected={usageTab === "list"} className={usageTab === "list" ? "active" : ""} onClick={() => setUsageTab("list")}>明细列表</button>
+      </div>
+      {usageTab === "charts" && usageSummary && <div className="usage-tab-panel" role="tabpanel">
         <div className="usage-summary">
           <div><b>{formatDuration(usageSummary.totalForegroundSeconds)}</b><span>近 7 天前台使用</span></div>
           <div><b>{formatDuration(usageSummary.totalBackgroundSeconds)}</b><span>后台运行</span></div>
@@ -272,7 +277,8 @@ export default function App() {
         </div>
         {usageSummary.topApps.length > 0 && <div className="usage-ranking"><h4>前台使用排行</h4>{usageSummary.topApps.slice(0, 5).map((app, index) => <div key={app.name}><span>{index + 1}. {app.name}</span><i><em style={{width: `${Math.max(4, app.foregroundSeconds / Math.max(1, usageSummary.topApps[0].foregroundSeconds) * 100)}%`}} /></i><b>{formatDuration(app.foregroundSeconds)}</b></div>)}</div>}
         {usageSummary.dailyUsage.length > 0 && <div className="daily-usage"><h4>每日使用与启动次数</h4><div>{usageSummary.dailyUsage.map(day => { const peak = Math.max(...usageSummary.dailyUsage.map(item => item.foregroundSeconds), 1); return <span key={day.date} title={`${day.date} · 前台 ${formatDuration(day.foregroundSeconds)} · 启动 ${day.launchCount} 次`}><i style={{height: `${Math.max(5, day.foregroundSeconds / peak * 100)}%`}}/><small>{day.date.slice(5)}</small><b>{day.launchCount} 次</b></span>})}</div></div>}
-      </>}
+      </div>}
+      {usageTab === "list" && <div className="usage-tab-panel usage-list-panel" role="tabpanel">
       <input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" />
       <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>
       <div className="usage-list">{visibleUsage.map(record => <article key={record.sessionId} className="usage-row">
@@ -281,6 +287,7 @@ export default function App() {
         <div><b>{formatDuration(record.runtimeSeconds)}</b><small>后台 {formatDuration(record.backgroundSeconds)}</small></div>
         <div><b>{formatDuration(record.foregroundSeconds)}</b><small>{record.isRunning ? "● 活跃会话" : "已结束"}</small></div>
       </article>)}{!visibleUsage.length && <p className="empty">没有匹配的应用使用记录。</p>}</div>
+      </div>}
       </div>
     </section></div>}
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>

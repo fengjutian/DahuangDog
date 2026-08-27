@@ -442,7 +442,7 @@ impl Monitor {
         self.storage
             .as_ref()
             .ok_or("本地记忆暂时不可用".to_string())?
-            .recent_app_sessions(200)
+            .recent_app_sessions(2_000)
             .map_err(|error| format!("读取应用使用记录失败：{error}"))
     }
 
