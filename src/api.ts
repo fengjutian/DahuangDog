@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, CurrentStatus } from "./types";
+import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -40,4 +40,30 @@ export async function prepareTerminate(pid: number, startedAt: number): Promise<
 
 export async function confirmAction(previewId: string): Promise<ActionResult> {
   return invoke("confirm_action", { previewId });
+}
+
+export async function getHistory(): Promise<HistorySummary> {
+  if (isTauri()) return invoke("get_history");
+  const now = Date.now();
+  return {
+    points: Array.from({ length: 40 }, (_, index) => ({
+      capturedAt: now - (39 - index) * 2000,
+      cpuPercent: 20 + Math.sin(index / 4) * 8,
+      memoryPercent: 50 + index * 0.08,
+      diskBps: 800_000 + Math.abs(Math.sin(index)) * 2_000_000,
+      networkBps: 500_000 + Math.abs(Math.cos(index / 2)) * 3_000_000
+    })),
+    baselineCpuPercent: 24,
+    baselineMemoryPercent: 51
+  };
+}
+
+export async function diagnosePerformance(): Promise<LocalDiagnosis> {
+  if (isTauri()) return invoke("diagnose_performance");
+  return {
+    summary: "我看了一圈，当前没有明显的资源瓶颈。",
+    details: ["CPU 当前使用率 18%", "内存当前使用率 52%", "chrome.exe：CPU 8.2%，内存 1.5 GB"],
+    suggestions: ["如果卡顿再次出现，我会继续记录当时的状态"],
+    confidence: "medium"
+  };
 }

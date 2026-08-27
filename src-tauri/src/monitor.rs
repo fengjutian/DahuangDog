@@ -1,7 +1,7 @@
 use crate::storage::Storage;
 use crate::types::{
-    ActionPreview, ActionResult, CurrentStatus, Finding, ProcessSample, SystemSnapshot,
-    TimelineEvent, VerificationStatus,
+    ActionPreview, ActionResult, CurrentStatus, Finding, HistorySummary, LocalDiagnosis,
+    ProcessSample, SystemSnapshot, TimelineEvent, VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -320,6 +320,77 @@ impl Monitor {
             findings: self.findings.clone(),
             timeline: self.timeline.iter().cloned().collect(),
             verification: self.verification.clone(),
+        }
+    }
+
+    pub fn history(&self) -> Result<HistorySummary, String> {
+        self.storage
+            .as_ref()
+            .ok_or("本地记忆暂时不可用".to_string())?
+            .history(120)
+            .map_err(|error| format!("读取历史失败：{error}"))
+    }
+
+    pub fn diagnose(&self) -> LocalDiagnosis {
+        let Some(snapshot) = &self.snapshot else {
+            return LocalDiagnosis {
+                summary: "我还没有收集到足够的数据。".into(),
+                details: vec![],
+                suggestions: vec!["稍等几秒再试一次".into()],
+                confidence: "low".into(),
+            };
+        };
+        let mut details = vec![
+            format!("CPU 当前使用率 {:.0}%", snapshot.cpu_percent),
+            format!("内存当前使用率 {:.0}%", snapshot.memory_percent),
+        ];
+        for process in snapshot.processes.iter().take(3) {
+            details.push(format!(
+                "{}：CPU {:.1}%，内存 {:.1} GB",
+                process.name,
+                process.cpu_percent,
+                process.memory_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+            ));
+        }
+        let (summary, suggestions, confidence) = if snapshot.memory_percent >= 90.0 {
+            (
+                "主人，我找到原因了：电脑现在主要是内存压力太大。",
+                vec![
+                    "先保存工作，再检查内存占用最高的普通应用".into(),
+                    "不要直接结束 Windows 系统进程".into(),
+                ],
+                "high",
+            )
+        } else if snapshot.cpu_percent >= 90.0 {
+            (
+                "主人，电脑现在主要是 CPU 一直很忙。",
+                vec![
+                    "观察 CPU 占用最高的进程是否持续异常".into(),
+                    "短时尖峰可以先等一会儿".into(),
+                ],
+                "high",
+            )
+        } else if snapshot.disk_read_bps + snapshot.disk_write_bps > 100 * 1024 * 1024 {
+            (
+                "主人，电脑可能正在大量读写磁盘。",
+                vec![
+                    "等待安装、同步或扫描任务结束".into(),
+                    "查看资源占用靠前的进程".into(),
+                ],
+                "medium",
+            )
+        } else {
+            (
+                "我看了一圈，当前没有明显的资源瓶颈。",
+                vec!["如果卡顿再次出现，我会继续记录当时的状态".into()],
+                "medium",
+            )
+        };
+        LocalDiagnosis {
+            summary: summary.into(),
+            details,
+            suggestions,
+            confidence: confidence.into(),
         }
     }
 

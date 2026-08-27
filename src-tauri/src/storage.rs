@@ -1,4 +1,4 @@
-use crate::types::{SystemSnapshot, TimelineEvent};
+use crate::types::{HistorySummary, MetricPoint, SystemSnapshot, TimelineEvent};
 use rusqlite::{params, Connection};
 use std::{fs, path::PathBuf};
 
@@ -131,6 +131,42 @@ impl Storage {
             params![action_id, verification],
         )?;
         Ok(())
+    }
+
+    pub fn history(&self, limit: u32) -> rusqlite::Result<HistorySummary> {
+        let mut statement = self.connection.prepare(
+            "SELECT captured_at, cpu_percent, memory_percent,
+                    disk_read_bps + disk_write_bps,
+                    network_receive_bps + network_send_bps
+             FROM system_snapshots ORDER BY captured_at DESC LIMIT ?1",
+        )?;
+        let mut points: Vec<MetricPoint> = statement
+            .query_map([limit], |row| {
+                Ok(MetricPoint {
+                    captured_at: row.get(0)?,
+                    cpu_percent: row.get(1)?,
+                    memory_percent: row.get(2)?,
+                    disk_bps: row.get(3)?,
+                    network_bps: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        points.reverse();
+        let since = points
+            .last()
+            .map(|point| point.captured_at.saturating_sub(24 * 60 * 60 * 1000))
+            .unwrap_or(0);
+        let (cpu, memory) = self.connection.query_row(
+            "SELECT COALESCE(AVG(cpu_percent), 0), COALESCE(AVG(memory_percent), 0)
+             FROM system_snapshots WHERE captured_at >= ?1",
+            [since],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(HistorySummary {
+            points,
+            baseline_cpu_percent: cpu,
+            baseline_memory_percent: memory,
+        })
     }
 }
 

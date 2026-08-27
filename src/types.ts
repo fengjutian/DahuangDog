@@ -64,6 +64,27 @@ export interface VerificationStatus {
   startedAt: number;
 }
 
+export interface MetricPoint {
+  capturedAt: number;
+  cpuPercent: number;
+  memoryPercent: number;
+  diskBps: number;
+  networkBps: number;
+}
+
+export interface HistorySummary {
+  points: MetricPoint[];
+  baselineCpuPercent: number;
+  baselineMemoryPercent: number;
+}
+
+export interface LocalDiagnosis {
+  summary: string;
+  details: string[];
+  suggestions: string[];
+  confidence: "low" | "medium" | "high";
+}
+
 export interface ActionPreview {
   previewId: string;
   action: "terminateProcess";

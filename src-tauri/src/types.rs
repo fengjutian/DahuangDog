@@ -71,6 +71,33 @@ pub struct VerificationStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MetricPoint {
+    pub captured_at: u64,
+    pub cpu_percent: f32,
+    pub memory_percent: f32,
+    pub disk_bps: u64,
+    pub network_bps: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySummary {
+    pub points: Vec<MetricPoint>,
+    pub baseline_cpu_percent: f32,
+    pub baseline_memory_percent: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalDiagnosis {
+    pub summary: String,
+    pub details: Vec<String>,
+    pub suggestions: Vec<String>,
+    pub confidence: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ActionPreview {
     pub preview_id: String,
     pub action: String,
