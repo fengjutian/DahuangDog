@@ -268,7 +268,7 @@ export default function App() {
       </section>
 
       <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><span>最近事件</span></div>
-        <ol className="timeline">{status.timeline.slice(0, 8).map(item => <li key={item.id}><time>{new Date(item.occurredAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{item.message}</span></li>)}</ol>
+        <ol className="timeline">{status.timeline.slice(0, 8).map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{item.message}</span></li>)}</ol>
       </section>
     </div>
 

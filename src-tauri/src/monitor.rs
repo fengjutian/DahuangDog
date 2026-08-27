@@ -249,6 +249,7 @@ pub struct Monitor {
     last_alert_at: HashMap<String, u64>,
     app_sessions: HashMap<(u32, u64), AppUsageRecord>,
     last_lifecycle_tick: u64,
+    last_patrol_at: u64,
 }
 
 impl Monitor {
@@ -284,6 +285,7 @@ impl Monitor {
             last_alert_at: HashMap::new(),
             app_sessions: HashMap::new(),
             last_lifecycle_tick: now(),
+            last_patrol_at: now(),
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -409,6 +411,11 @@ impl Monitor {
             let _ = storage.save_snapshot(&snapshot, self.settings.retention_days);
         }
         self.snapshot = Some(snapshot);
+        let current = now();
+        if current.saturating_sub(self.last_patrol_at) >= 10 * 60 {
+            self.push_event("patrol", "巡逻状态已刷新，大黄狗正在继续巡逻");
+            self.last_patrol_at = current;
+        }
         self.pending
             .retain(|_, action| action.preview.expires_at >= now() * 1000);
     }
