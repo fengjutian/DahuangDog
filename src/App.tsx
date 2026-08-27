@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
-import type { ActionPreview, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
+import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import type { ActionPreview, AppUsageRecord, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -20,6 +20,14 @@ function formatRate(value: number): string {
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB/s`;
   if (value >= 1024) return `${(value / 1024).toFixed(0)} KB/s`;
   return `${value.toFixed(0)} B/s`;
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor(seconds % 3600 / 60);
+  return `${hours} 小时 ${minutes} 分钟`;
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
@@ -59,6 +67,7 @@ export default function App() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
+  const [usage, setUsage] = useState<AppUsageRecord[] | null>(null);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -143,11 +152,18 @@ export default function App() {
     catch (error) { setMessage(String(error)); }
   }
 
+  async function showUsage() {
+    setBusy(true);
+    try { setUsage(await getAppUsageHistory()); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -193,6 +209,18 @@ export default function App() {
       <div className="security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
         <span className={`risk-pill ${entry.riskLevel}`}>{entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>
       </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>
+    </section>}
+
+    {usage && <section className="usage-report card">
+      <div className="section-title"><div><span className="eyebrow">应用生命周期</span><h3>⏱ 使用记录</h3></div><button onClick={() => setUsage(null)}>收起</button></div>
+      <p className="security-note">启动与运行时间来自进程生命周期；前台使用时间从大黄狗首次观察后累计。</p>
+      <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>
+      <div className="usage-list">{usage.map(record => <article key={record.sessionId} className="usage-row">
+        <div><b>{record.name}</b><small>PID {record.rootPid} · 峰值 {record.memberPeak} 个进程</small></div>
+        <div><span>{new Date(record.startedAt).toLocaleString("zh-CN")}</span><small>{record.isRunning ? "仍在运行" : record.closedAt ? `关闭于 ${new Date(record.closedAt).toLocaleString("zh-CN")}` : "关闭时间未知"}</small></div>
+        <div><b>{formatDuration(record.runtimeSeconds)}</b><small>后台 {formatDuration(record.backgroundSeconds)}</small></div>
+        <div><b>{formatDuration(record.foregroundSeconds)}</b><small>{record.isRunning ? "● 活跃会话" : "已结束"}</small></div>
+      </article>)}{!usage.length && <p className="empty">还没有应用使用记录。</p>}</div>
     </section>}
 
     {history && <TrendChart history={history} />}

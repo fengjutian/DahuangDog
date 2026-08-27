@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AppUsageRecord, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -106,4 +106,10 @@ export async function saveSettings(settings: UserSettings): Promise<UserSettings
 export async function clearLocalMemory(): Promise<void> {
   if (!isTauri()) throw new Error("浏览器预览模式没有本地记忆");
   return invoke("clear_local_memory");
+}
+
+export async function getAppUsageHistory(): Promise<AppUsageRecord[]> {
+  if (isTauri()) return invoke("get_app_usage_history");
+  const now = Date.now();
+  return [{ sessionId: "demo", name: "chrome.exe", rootPid: 4242, startedAt: now - 7_200_000, firstSeenAt: now - 3_600_000, lastSeenAt: now, closedAt: null, runtimeSeconds: 7200, foregroundSeconds: 1840, backgroundSeconds: 5360, memberPeak: 8, isRunning: true }];
 }

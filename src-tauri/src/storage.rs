@@ -249,10 +249,20 @@ impl Storage {
                 foreground_seconds = excluded.foreground_seconds,
                 background_seconds = excluded.background_seconds,
                 member_peak = excluded.member_peak, is_running = excluded.is_running",
-            params![record.session_id, record.name, record.root_pid, record.started_at,
-                record.first_seen_at, record.last_seen_at, record.closed_at,
-                record.runtime_seconds, record.foreground_seconds, record.background_seconds,
-                record.member_peak, record.is_running],
+            params![
+                record.session_id,
+                record.name,
+                record.root_pid,
+                record.started_at,
+                record.first_seen_at,
+                record.last_seen_at,
+                record.closed_at,
+                record.runtime_seconds,
+                record.foreground_seconds,
+                record.background_seconds,
+                record.member_peak,
+                record.is_running
+            ],
         )?;
         Ok(())
     }
@@ -264,12 +274,24 @@ impl Storage {
                     member_peak, is_running
              FROM app_sessions ORDER BY is_running DESC, last_seen_at DESC LIMIT ?1",
         )?;
-        let records = statement.query_map([limit], |row| Ok(AppUsageRecord {
-            session_id: row.get(0)?, name: row.get(1)?, root_pid: row.get(2)?,
-            started_at: row.get(3)?, first_seen_at: row.get(4)?, last_seen_at: row.get(5)?,
-            closed_at: row.get(6)?, runtime_seconds: row.get(7)?, foreground_seconds: row.get(8)?,
-            background_seconds: row.get(9)?, member_peak: row.get(10)?, is_running: row.get(11)?,
-        }))?.collect();
+        let records = statement
+            .query_map([limit], |row| {
+                Ok(AppUsageRecord {
+                    session_id: row.get(0)?,
+                    name: row.get(1)?,
+                    root_pid: row.get(2)?,
+                    started_at: row.get(3)?,
+                    first_seen_at: row.get(4)?,
+                    last_seen_at: row.get(5)?,
+                    closed_at: row.get(6)?,
+                    runtime_seconds: row.get(7)?,
+                    foreground_seconds: row.get(8)?,
+                    background_seconds: row.get(9)?,
+                    member_peak: row.get(10)?,
+                    is_running: row.get(11)?,
+                })
+            })?
+            .collect();
         records
     }
 }

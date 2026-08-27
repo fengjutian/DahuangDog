@@ -334,22 +334,17 @@ impl Monitor {
             .min(self.sampling_interval_seconds().saturating_mul(2));
         self.last_lifecycle_tick = current_seconds;
         let foreground_pid = foreground_process_id();
-        let foreground_key = foreground_pid.and_then(|pid| {
-            applications.iter().find(|application| {
-                application
-                    .members
+        let foreground_key = foreground_pid
+            .and_then(|pid| {
+                applications
                     .iter()
-                    .any(|member| member.pid == pid)
+                    .find(|application| application.members.iter().any(|member| member.pid == pid))
             })
-        }).map(|application| {
-            (application.root_pid, application.root_process.started_at)
-        });
+            .map(|application| (application.root_pid, application.root_process.started_at));
         let current_keys: std::collections::HashSet<_> = applications
             .iter()
             .filter(|application| !application.root_process.is_critical)
-            .map(|application| {
-                (application.root_pid, application.root_process.started_at)
-            })
+            .map(|application| (application.root_pid, application.root_process.started_at))
             .collect();
         let mut records = Vec::new();
         for application in applications
@@ -357,27 +352,37 @@ impl Monitor {
             .filter(|application| !application.root_process.is_critical)
         {
             let key = (application.root_pid, application.root_process.started_at);
-            let record = self.app_sessions.entry(key).or_insert_with(|| AppUsageRecord {
-                session_id: format!("{}-{}", application.root_pid, application.root_process.started_at),
-                name: application.name.clone(),
-                root_pid: application.root_pid,
-                started_at: application.root_process.started_at * 1000,
-                first_seen_at: current_ms,
-                last_seen_at: current_ms,
-                closed_at: None,
-                runtime_seconds: current_seconds.saturating_sub(application.root_process.started_at),
-                foreground_seconds: 0,
-                background_seconds: 0,
-                member_peak: application.member_count,
-                is_running: true,
-            });
+            let record = self
+                .app_sessions
+                .entry(key)
+                .or_insert_with(|| AppUsageRecord {
+                    session_id: format!(
+                        "{}-{}",
+                        application.root_pid, application.root_process.started_at
+                    ),
+                    name: application.name.clone(),
+                    root_pid: application.root_pid,
+                    started_at: application.root_process.started_at * 1000,
+                    first_seen_at: current_ms,
+                    last_seen_at: current_ms,
+                    closed_at: None,
+                    runtime_seconds: current_seconds
+                        .saturating_sub(application.root_process.started_at),
+                    foreground_seconds: 0,
+                    background_seconds: 0,
+                    member_peak: application.member_count,
+                    is_running: true,
+                });
             record.last_seen_at = current_ms;
-            record.runtime_seconds = current_seconds.saturating_sub(application.root_process.started_at);
+            record.runtime_seconds =
+                current_seconds.saturating_sub(application.root_process.started_at);
             record.member_peak = record.member_peak.max(application.member_count);
             if foreground_key == Some(key) {
                 record.foreground_seconds = record.foreground_seconds.saturating_add(elapsed);
             }
-            record.background_seconds = record.runtime_seconds.saturating_sub(record.foreground_seconds);
+            record.background_seconds = record
+                .runtime_seconds
+                .saturating_sub(record.foreground_seconds);
             records.push(record.clone());
         }
         let closed_keys: Vec<_> = self
@@ -391,7 +396,9 @@ impl Monitor {
                 record.closed_at = Some(current_ms);
                 record.last_seen_at = current_ms;
                 record.runtime_seconds = current_seconds.saturating_sub(record.started_at / 1000);
-                record.background_seconds = record.runtime_seconds.saturating_sub(record.foreground_seconds);
+                record.background_seconds = record
+                    .runtime_seconds
+                    .saturating_sub(record.foreground_seconds);
                 record.is_running = false;
                 records.push(record);
             }
