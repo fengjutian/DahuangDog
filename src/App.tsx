@@ -80,6 +80,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistorySummary | null>(null);
+  const [historyError, setHistoryError] = useState("");
   const [historyRange, setHistoryRange] = useState(10);
   const [diagnosis, setDiagnosis] = useState<LocalDiagnosis | null>(null);
   const [security, setSecurity] = useState<SecurityReport | null>(null);
@@ -116,7 +117,7 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    const load = () => void getHistoryRange(historyRange).then(setHistory).catch(() => undefined);
+    const load = () => void getHistoryRange(historyRange).then(result => { setHistory(result); setHistoryError(""); }).catch(error => setHistoryError(String(error)));
     load();
     const timer = window.setInterval(load, 10_000);
     return () => window.clearInterval(timer);
@@ -305,7 +306,7 @@ export default function App() {
     {selectedHistoryMetric && <div className="modal-backdrop" onClick={() => setSelectedHistoryMetric(null)}><section className="modal report-modal metric-history-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">每个采样时间点</span><h3>{historyMetricLabel[selectedHistoryMetric]}历史明细</h3></div><button className="modal-close" onClick={() => setSelectedHistoryMetric(null)} aria-label="关闭历史明细">×</button></div>
       <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={historyRange === value ? "active" : ""} onClick={() => setHistoryRange(Number(value))}>{label}</button>)}</div>
-      <div className="report-scroll metric-history-scroll">{history?.points.length ? <div className="metric-history-table" role="table">
+      <div className="report-scroll metric-history-scroll">{historyError ? <p className="history-error">历史数据读取失败：{historyError}</p> : history?.points.length ? <div className="metric-history-table" role="table">
         <div className="metric-history-row metric-history-head" role="row"><b>采样时间</b>{(["cpuPercent","memoryPercent","diskBps","networkBps"] as HistoryMetricKey[]).map(key => <b key={key} className={selectedHistoryMetric === key ? "selected" : ""}>{historyMetricLabel[key]}</b>)}</div>
         {[...history.points].reverse().map(point => <div className="metric-history-row" role="row" key={point.capturedAt}><time>{new Date(point.capturedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span className={selectedHistoryMetric === "cpuPercent" ? "selected" : ""}>{point.cpuPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "memoryPercent" ? "selected" : ""}>{point.memoryPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "diskBps" ? "selected" : ""}>{formatRate(point.diskBps)}</span><span className={selectedHistoryMetric === "networkBps" ? "selected" : ""}>{formatRate(point.networkBps)}</span></div>)}
       </div> : <p className="empty">当前时间范围还没有历史采样数据。</p>}</div>

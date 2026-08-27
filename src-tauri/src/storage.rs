@@ -210,7 +210,8 @@ impl Storage {
         let bucket = (range_minutes as u64 * 60_000 / 300).max(2_000);
         let mut statement = self.connection.prepare(
             "SELECT MAX(captured_at), AVG(cpu_percent), AVG(memory_percent),
-                    AVG(disk_read_bps + disk_write_bps), AVG(network_receive_bps + network_send_bps)
+                    CAST(AVG(disk_read_bps + disk_write_bps) AS INTEGER),
+                    CAST(AVG(network_receive_bps + network_send_bps) AS INTEGER)
              FROM system_snapshots WHERE captured_at >= ?1 GROUP BY captured_at / ?2 ORDER BY 1",
         )?;
         let points: Vec<MetricPoint> = statement.query_map(params![since, bucket], |row| Ok(MetricPoint {
@@ -435,5 +436,29 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].foreground_seconds, 40);
         assert_eq!(loaded[0].closed_at, Some(161_000));
+    }
+
+    #[test]
+    fn history_range_reads_averaged_byte_rates_as_integers() {
+        let storage = Storage::open(PathBuf::from(":memory:")).unwrap();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        for (offset, disk_read, disk_write) in [(1_000, 100_u64, 300_u64), (2_000, 200, 500)] {
+            storage.connection.execute(
+                "INSERT INTO system_snapshots (
+                    captured_at, cpu_percent, memory_percent, used_memory_bytes,
+                    total_memory_bytes, disk_read_bps, disk_write_bps,
+                    network_receive_bps, network_send_bps
+                 ) VALUES (?1, 20, 60, 1, 2, ?2, ?3, 40, 60)",
+                params![now_ms - offset, disk_read, disk_write],
+            ).unwrap();
+        }
+
+        let history = storage.history_range(10).unwrap();
+        assert!(!history.points.is_empty());
+        assert!(history.points.iter().all(|point| point.disk_bps > 0));
+        assert!(history.points.iter().all(|point| point.network_bps == 100));
     }
 }
