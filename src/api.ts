@@ -15,6 +15,9 @@ const demoStatus: CurrentStatus = {
     diskWriteBps: 420_000,
     networkReceiveBps: 2_850_000,
     networkSendBps: 310_000,
+    diskTotalBytes: 512_000_000_000,
+    diskAvailableBytes: 180_000_000_000,
+    uptimeSeconds: 86400,
     processes: [
       { pid: 4242, parentPid: null, startedAt: Date.now() / 1000 - 3600, name: "chrome.exe", cpuPercent: 8.2, memoryBytes: 1_610_612_736, isCritical: false },
       { pid: 4243, parentPid: 4242, startedAt: Date.now() / 1000 - 3500, name: "chrome.exe", cpuPercent: 2.1, memoryBytes: 410_612_736, isCritical: false },
@@ -77,6 +80,10 @@ export async function getHistory(): Promise<HistorySummary> {
   };
 }
 
+export async function getHistoryRange(rangeMinutes: number): Promise<HistorySummary> {
+  return isTauri() ? invoke("get_history_range", { rangeMinutes }) : getHistory();
+}
+
 export async function diagnosePerformance(): Promise<LocalDiagnosis> {
   if (isTauri()) return invoke("diagnose_performance");
   return {
@@ -91,6 +98,7 @@ export async function getSecurityReport(): Promise<SecurityReport> {
   if (!isTauri()) return {
     scannedAt: Date.now(), scannedPrograms: 42, signedPrograms: 38,
     summary: "发现 1 个值得进一步确认的项目。", securityScore: 86, mediumRiskCount: 1, lowRiskCount: 0,
+    networkConnections: [], scheduledTasks: [], windowsServices: [],
     programs: [{ pid: 8842, name: "example.exe", path: "C:\\Users\\demo\\AppData\\Local\\example.exe", signatureStatus: "unverified", riskLevel: "medium", reasons: ["没有可验证的数字签名", "程序位于用户可写目录"] }],
     startupEntries: [{ name: "OneDrive", command: "OneDrive.exe /background", source: "当前用户\\Run", riskLevel: "normal", reasons: [] }]
   };
@@ -123,6 +131,7 @@ export async function getAppUsageSummary(periodDays = 7): Promise<AppUsageSummar
   return {
     periodDays, applicationCount: 3, sessionCount: 6, totalRuntimeSeconds: 28800,
     totalForegroundSeconds: 10800, totalBackgroundSeconds: 18000, longestUsedApp: "chrome.exe",
-    topApps: [{ name: "chrome.exe", sessionCount: 2, runtimeSeconds: 14400, foregroundSeconds: 7200, backgroundSeconds: 7200 }]
+    topApps: [{ name: "chrome.exe", sessionCount: 2, runtimeSeconds: 14400, foregroundSeconds: 7200, backgroundSeconds: 7200 }],
+    dailyUsage: [{ date: new Date().toISOString().slice(0, 10), foregroundSeconds: 7200, launchCount: 2 }]
   };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
 import type { ActionPreview, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
@@ -34,24 +34,20 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
   return <div className={`metric ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function linePath(points: MetricPoint[], key: "cpuPercent" | "memoryPercent"): string {
+function linePath(points: MetricPoint[], key: "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps"): string {
   if (points.length < 2) return "";
   return points.map((point, index) => {
     const x = index / (points.length - 1) * 100;
-    const y = 100 - Math.max(0, Math.min(100, point[key]));
+    const max = key === "cpuPercent" || key === "memoryPercent" ? 100 : Math.max(...points.map(item => item[key]), 1);
+    const y = 100 - Math.max(0, Math.min(100, point[key] / max * 100));
     return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
 }
 
-function TrendChart({ history }: { history: HistorySummary }) {
+function TrendChart({ history, range, onRange }: { history: HistorySummary; range: number; onRange: (range: number) => void }) {
   return <section className="card trend-card">
-    <div className="section-title"><h3>最近趋势</h3><span>最近 {history.points.length * 2} 秒</span></div>
-    <svg className="trend" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="CPU 和内存趋势图">
-      <path className="grid-line" d="M0,25 H100 M0,50 H100 M0,75 H100" />
-      <path className="memory-line" d={linePath(history.points, "memoryPercent")} />
-      <path className="cpu-line" d={linePath(history.points, "cpuPercent")} />
-    </svg>
-    <div className="legend"><span className="cpu-dot">CPU · 基线 {history.baselineCpuPercent.toFixed(0)}%</span><span className="memory-dot">内存 · 基线 {history.baselineMemoryPercent.toFixed(0)}%</span></div>
+    <div className="section-title"><h3>资源趋势</h3><div className="range-tabs">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={range === value ? "active" : ""} onClick={() => onRange(Number(value))}>{label}</button>)}</div></div>
+    <div className="trend-grid">{([['cpuPercent','CPU','cpu-line'],['memoryPercent','内存','memory-line'],['diskBps','磁盘吞吐','disk-line'],['networkBps','网络吞吐','network-line']] as const).map(([key,label,style]) => <div className="mini-trend" key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path className="grid-line" d="M0,25 H100 M0,50 H100 M0,75 H100"/><path className={style} d={linePath(history.points,key)}/></svg></div>)}</div>
     <div className="monitor-insights">
       <div><span>CPU 峰值</span><b>{history.peakCpuPercent.toFixed(0)}%</b></div>
       <div><span>内存峰值</span><b>{history.peakMemoryPercent.toFixed(0)}%</b></div>
@@ -67,6 +63,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistorySummary | null>(null);
+  const [historyRange, setHistoryRange] = useState(10);
   const [diagnosis, setDiagnosis] = useState<LocalDiagnosis | null>(null);
   const [security, setSecurity] = useState<SecurityReport | null>(null);
   const [selected, setSelected] = useState<ProcessSample | null>(null);
@@ -94,11 +91,11 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    const load = () => void getHistory().then(setHistory).catch(() => undefined);
+    const load = () => void getHistoryRange(historyRange).then(setHistory).catch(() => undefined);
     load();
     const timer = window.setInterval(load, 10_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [historyRange]);
 
   useEffect(() => { void getSettings().then(setSettings).catch(() => undefined); }, []);
 
@@ -192,6 +189,9 @@ export default function App() {
       <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} />
       <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} />
       <Metric label="发现" value={`${status.findings.length} 个`} tone={status.findings.length ? "warn" : undefined} />
+      <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} />
+      <Metric label="系统运行" value={snap ? formatDuration(snap.uptimeSeconds) : "--"} />
+      <Metric label="进程 / 线程" value={snap ? `${snap.processes.length}+ / ${snap.processes.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}+` : "--"} />
     </section>
 
     {status.verification && <section className={`verification ${status.verification.status}`}>
@@ -214,7 +214,7 @@ export default function App() {
       <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · 完全在本机分析</small>
     </section>}
 
-    {history && <TrendChart history={history} />}
+    {history && <TrendChart history={history} range={historyRange} onRange={setHistoryRange} />}
 
     <div className="columns">
       <section className="card"><div className="section-title"><h3>正在盯着</h3><span>应用总占用 · 点击展开子进程</span></div>
@@ -224,7 +224,7 @@ export default function App() {
             <span><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
           </button>
           {expandedApp === app.rootPid && <div className="child-processes">{app.members.map(process => <button className="process child" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
-            <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""}</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
+            <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""} · {process.threadCount ?? 0} 线程</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
           </button>)}</div>}
         </div>)}{!snap?.applications.length && <p className="empty">还没有采集到应用数据。</p>}</div>
       </section>
@@ -244,6 +244,7 @@ export default function App() {
           <div><b>{security.lowRiskCount}</b><span>低风险信号</span></div>
           <div><b>{security.signedPrograms}/{security.scannedPrograms}</b><span>签名有效</span></div>
         </div>
+        <div className="security-inventory"><span><b>{security.networkConnections.length}</b> TCP 连接</span><span><b>{security.scheduledTasks.length}</b> 计划任务</span><span><b>{security.windowsServices.length}</b> Windows 服务</span></div>
         <div className="security-summary"><b>{security.summary}</b><span>扫描于 {new Date(security.scannedAt).toLocaleString("zh-CN")} · {security.startupEntries.length} 个启动项</span></div>
         <p className="security-note">未验证不等于恶意程序。大黄狗只展示客观信号，请结合来源和用途判断。</p>
         <div className="report-filters"><button className={securityFilter === "all" ? "active" : ""} onClick={() => setSecurityFilter("all")}>全部</button><button className={securityFilter === "medium" ? "active" : ""} onClick={() => setSecurityFilter("medium")}>需要确认</button><button className={securityFilter === "low" ? "active" : ""} onClick={() => setSecurityFilter("low")}>低风险</button></div>
@@ -253,6 +254,9 @@ export default function App() {
         <div className="security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
           <span className={`risk-pill ${entry.riskLevel}`}>{entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>
         </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>
+        <div className="security-group"><h4>监听端口与网络连接</h4>{security.networkConnections.slice(0, 80).map(connection => <article className="inventory-row" key={`${connection.protocol}-${connection.localAddress}-${connection.remoteAddress}-${connection.pid}`}><b>{connection.processName}</b><code>{connection.localAddress} → {connection.remoteAddress}</code><span>PID {connection.pid} · {connection.state}</span></article>)}{!security.networkConnections.length && <p className="empty">没有读取到 TCP 连接。</p>}</div>
+        <div className="security-group"><h4>计划任务</h4>{security.scheduledTasks.slice(0, 80).map(task => <article className="inventory-row" key={task.path}><b>{task.name}</b><code>{task.path}</code></article>)}{!security.scheduledTasks.length && <p className="empty">没有读取到计划任务，部分目录可能需要管理员权限。</p>}</div>
+        <div className="security-group"><h4>Windows 服务</h4>{security.windowsServices.slice(0, 100).map(service => <article className="inventory-row" key={service.name}><b>{service.name}</b><code>{service.imagePath || "系统驱动或未设置路径"}</code><span>{service.startMode}</span></article>)}</div>
       </div>
     </section></div>}
     {usage && <div className="modal-backdrop" onClick={() => setUsage(null)}><section className="modal report-modal usage-report" onClick={e => e.stopPropagation()}>
@@ -266,6 +270,7 @@ export default function App() {
           <div><b>{usageSummary.longestUsedApp ?? "暂无"}</b><span>最常使用</span></div>
         </div>
         {usageSummary.topApps.length > 0 && <div className="usage-ranking"><h4>前台使用排行</h4>{usageSummary.topApps.slice(0, 5).map((app, index) => <div key={app.name}><span>{index + 1}. {app.name}</span><i><em style={{width: `${Math.max(4, app.foregroundSeconds / Math.max(1, usageSummary.topApps[0].foregroundSeconds) * 100)}%`}} /></i><b>{formatDuration(app.foregroundSeconds)}</b></div>)}</div>}
+        {usageSummary.dailyUsage.length > 0 && <div className="daily-usage"><h4>每日使用与启动次数</h4><div>{usageSummary.dailyUsage.map(day => { const peak = Math.max(...usageSummary.dailyUsage.map(item => item.foregroundSeconds), 1); return <span key={day.date} title={`${day.date} · 前台 ${formatDuration(day.foregroundSeconds)} · 启动 ${day.launchCount} 次`}><i style={{height: `${Math.max(5, day.foregroundSeconds / peak * 100)}%`}}/><small>{day.date.slice(5)}</small><b>{day.launchCount} 次</b></span>})}</div></div>}
       </>}
       <input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" />
       <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>

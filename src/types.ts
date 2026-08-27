@@ -15,6 +15,7 @@ export interface ProcessSample {
   cpuPercent: number;
   memoryBytes: number;
   isCritical: boolean;
+  threadCount?: number;
 }
 
 export interface ApplicationGroup {
@@ -37,6 +38,9 @@ export interface SystemSnapshot {
   diskWriteBps: number;
   networkReceiveBps: number;
   networkSendBps: number;
+  diskTotalBytes: number;
+  diskAvailableBytes: number;
+  uptimeSeconds: number;
   processes: ProcessSample[];
   applications: ApplicationGroup[];
 }
@@ -128,7 +132,14 @@ export interface SecurityReport {
   securityScore: number;
   mediumRiskCount: number;
   lowRiskCount: number;
+  networkConnections: NetworkConnection[];
+  scheduledTasks: ScheduledTask[];
+  windowsServices: WindowsService[];
 }
+
+export interface NetworkConnection { protocol: string; localAddress: string; remoteAddress: string; state: string; pid: number; processName: string; }
+export interface ScheduledTask { name: string; path: string; }
+export interface WindowsService { name: string; startMode: string; imagePath: string; }
 
 export interface AppUsageAggregate {
   name: string;
@@ -147,6 +158,7 @@ export interface AppUsageSummary {
   totalBackgroundSeconds: number;
   longestUsedApp: string | null;
   topApps: AppUsageAggregate[];
+  dailyUsage: { date: string; foregroundSeconds: number; launchCount: number }[];
 }
 
 export interface ActionPreview {
