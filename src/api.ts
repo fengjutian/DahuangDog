@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis } from "./types";
+import type { ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -66,4 +66,14 @@ export async function diagnosePerformance(): Promise<LocalDiagnosis> {
     suggestions: ["如果卡顿再次出现，我会继续记录当时的状态"],
     confidence: "medium"
   };
+}
+
+export async function getSecurityReport(): Promise<SecurityReport> {
+  if (!isTauri()) return {
+    scannedAt: Date.now(), scannedPrograms: 42, signedPrograms: 38,
+    summary: "发现 1 个值得进一步确认的项目。",
+    programs: [{ pid: 8842, name: "example.exe", path: "C:\\Users\\demo\\AppData\\Local\\example.exe", signatureStatus: "unverified", riskLevel: "medium", reasons: ["没有可验证的数字签名", "程序位于用户可写目录"] }],
+    startupEntries: [{ name: "OneDrive", command: "OneDrive.exe /background", source: "当前用户\\Run", riskLevel: "normal", reasons: [] }]
+  };
+  return invoke("get_security_report");
 }

@@ -1,4 +1,5 @@
 mod monitor;
+mod security;
 mod storage;
 mod types;
 
@@ -15,7 +16,9 @@ use tauri::{
     Emitter, Manager,
 };
 use tauri_plugin_notification::NotificationExt;
-use types::{ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis};
+use types::{
+    ActionPreview, ActionResult, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport,
+};
 
 type SharedMonitor = Arc<Mutex<Monitor>>;
 
@@ -66,6 +69,11 @@ fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalD
         .diagnose())
 }
 
+#[tauri::command]
+fn get_security_report() -> Result<SecurityReport, String> {
+    security::scan_security()
+}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -85,7 +93,8 @@ pub fn run() {
             prepare_terminate_process,
             confirm_action,
             get_history,
-            diagnose_performance
+            diagnose_performance,
+            get_security_report
         ])
         .setup(move |app| {
             let open = MenuItem::with_id(app, "open", "打开大黄狗", true, None::<&str>)?;

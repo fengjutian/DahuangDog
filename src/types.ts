@@ -85,6 +85,32 @@ export interface LocalDiagnosis {
   confidence: "low" | "medium" | "high";
 }
 
+export interface ProgramRisk {
+  pid: number;
+  name: string;
+  path: string;
+  signatureStatus: "valid" | "unverified";
+  riskLevel: "normal" | "low" | "medium";
+  reasons: string[];
+}
+
+export interface StartupEntry {
+  name: string;
+  command: string;
+  source: string;
+  riskLevel: "normal" | "medium";
+  reasons: string[];
+}
+
+export interface SecurityReport {
+  scannedAt: number;
+  scannedPrograms: number;
+  signedPrograms: number;
+  programs: ProgramRisk[];
+  startupEntries: StartupEntry[];
+  summary: string;
+}
+
 export interface ActionPreview {
   previewId: string;
   action: "terminateProcess";

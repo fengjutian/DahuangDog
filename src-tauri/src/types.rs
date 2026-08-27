@@ -98,6 +98,38 @@ pub struct LocalDiagnosis {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProgramRisk {
+    pub pid: u32,
+    pub name: String,
+    pub path: String,
+    pub signature_status: String,
+    pub risk_level: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartupEntry {
+    pub name: String,
+    pub command: String,
+    pub source: String,
+    pub risk_level: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityReport {
+    pub scanned_at: u64,
+    pub scanned_programs: usize,
+    pub signed_programs: usize,
+    pub programs: Vec<ProgramRisk>,
+    pub startup_entries: Vec<StartupEntry>,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ActionPreview {
     pub preview_id: String,
     pub action: String,

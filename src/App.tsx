@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { confirmAction, diagnosePerformance, getCurrentStatus, getHistory, prepareTerminate } from "./api";
-import type { ActionPreview, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample } from "./types";
+import { confirmAction, diagnosePerformance, getCurrentStatus, getHistory, getSecurityReport, prepareTerminate } from "./api";
+import type { ActionPreview, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -54,6 +54,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<HistorySummary | null>(null);
   const [diagnosis, setDiagnosis] = useState<LocalDiagnosis | null>(null);
+  const [security, setSecurity] = useState<SecurityReport | null>(null);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -101,11 +102,18 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+  async function scanSecurity() {
+    setBusy(true);
+    try { setSecurity(await getSecurityReport()); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><span className="live"><i />{stateLabel[status.dogState]}</span></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -139,6 +147,18 @@ export default function App() {
       <h2>{diagnosis.summary}</h2>
       <div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
       <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · 完全在本机分析</small>
+    </section>}
+
+    {security && <section className="security-report card">
+      <div className="section-title"><div><span className="eyebrow">只读安全扫描</span><h3>🛡️ 看门报告</h3></div><button onClick={() => setSecurity(null)}>收起</button></div>
+      <div className="security-summary"><b>{security.summary}</b><span>扫描 {security.scannedPrograms} 个程序 · {security.signedPrograms} 个签名有效 · {security.startupEntries.length} 个启动项</span></div>
+      <p className="security-note">未验证不等于恶意程序。大黄狗只展示客观信号，请结合来源和用途判断。</p>
+      {security.programs.length > 0 && <div className="security-group"><h4>运行中的程序</h4>{security.programs.map(program => <article className="security-item" key={`${program.pid}-${program.path}`}>
+        <span className={`risk-pill ${program.riskLevel}`}>{program.riskLevel === "medium" ? "需确认" : "低风险"}</span><div><b>{program.name}</b><code>{program.path}</code><small>{program.reasons.length ? program.reasons.join(" · ") : "未发现额外风险信号"}</small></div><span>{program.signatureStatus === "valid" ? "✓ 签名有效" : "? 签名未验证"}</span>
+      </article>)}</div>}
+      <div className="security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
+        <span className={`risk-pill ${entry.riskLevel}`}>{entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>
+      </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>
     </section>}
 
     {history && <TrendChart history={history} />}
