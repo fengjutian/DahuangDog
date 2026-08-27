@@ -328,4 +328,28 @@ mod tests {
         assert_eq!(loaded.cpu_threshold, 82.0);
         assert!(loaded.low_power_mode);
     }
+
+    #[test]
+    fn persists_application_lifecycle() {
+        let storage = Storage::open(PathBuf::from(":memory:")).unwrap();
+        let record = AppUsageRecord {
+            session_id: "42-100".into(),
+            name: "example.exe".into(),
+            root_pid: 42,
+            started_at: 100_000,
+            first_seen_at: 101_000,
+            last_seen_at: 161_000,
+            closed_at: Some(161_000),
+            runtime_seconds: 61,
+            foreground_seconds: 40,
+            background_seconds: 21,
+            member_peak: 3,
+            is_running: false,
+        };
+        storage.save_app_session(&record).unwrap();
+        let loaded = storage.recent_app_sessions(10).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].foreground_seconds, 40);
+        assert_eq!(loaded[0].closed_at, Some(161_000));
+    }
 }
