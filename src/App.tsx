@@ -16,6 +16,15 @@ const timelineKindLabel: Record<string, string> = {
   resolved: "恢复"
 };
 
+type HistoryMetricKey = "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps";
+
+const historyMetricLabel: Record<HistoryMetricKey, string> = {
+  cpuPercent: "CPU",
+  memoryPercent: "内存",
+  diskBps: "磁盘读写",
+  networkBps: "网络收发"
+};
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value)) return "--";
   const gb = value / 1024 / 1024 / 1024;
@@ -37,7 +46,8 @@ function formatDuration(seconds: number): string {
   return `${hours} 小时 ${minutes} 分钟`;
 }
 
-function Metric({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
+function Metric({ label, value, tone, onClick }: { label: string; value: string; tone?: "warn"; onClick?: () => void }) {
+  if (onClick) return <button className={`metric metric-clickable ${tone ?? ""}`} onClick={onClick} aria-label={`查看${label}历史明细`}><span>{label}</span><strong>{value}</strong><small>查看历史</small></button>;
   return <div className={`metric ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
@@ -88,6 +98,7 @@ export default function App() {
   const [hardwareTab, setHardwareTab] = useState<"cpu" | "gpu" | "power" | "disks" | "network" | "apps">("cpu");
   const [processQuery, setProcessQuery] = useState("");
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [selectedHistoryMetric, setSelectedHistoryMetric] = useState<HistoryMetricKey | null>(null);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -238,11 +249,11 @@ export default function App() {
     </section>
 
     <section className="metrics">
-      <Metric label="CPU" value={snap ? `${snap.cpuPercent.toFixed(0)}%` : "--"} tone={snap && snap.cpuPercent >= 90 ? "warn" : undefined} />
-      <Metric label="内存" value={snap ? `${snap.memoryPercent.toFixed(0)}%` : "--"} tone={snap && snap.memoryPercent >= 90 ? "warn" : undefined} />
+      <Metric label="CPU" value={snap ? `${snap.cpuPercent.toFixed(0)}%` : "--"} tone={snap && snap.cpuPercent >= 90 ? "warn" : undefined} onClick={() => setSelectedHistoryMetric("cpuPercent")} />
+      <Metric label="内存" value={snap ? `${snap.memoryPercent.toFixed(0)}%` : "--"} tone={snap && snap.memoryPercent >= 90 ? "warn" : undefined} onClick={() => setSelectedHistoryMetric("memoryPercent")} />
       <Metric label="已用内存" value={snap ? formatBytes(snap.usedMemoryBytes) : "--"} />
-      <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} />
-      <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} />
+      <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} onClick={() => setSelectedHistoryMetric("diskBps")} />
+      <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} onClick={() => setSelectedHistoryMetric("networkBps")} />
       <Metric label="发现" value={`${status.findings.length} 个`} tone={status.findings.length ? "warn" : undefined} />
       <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} />
       <Metric label="系统运行" value={snap ? formatDuration(snap.uptimeSeconds) : "--"} />
@@ -291,6 +302,14 @@ export default function App() {
     </div>
 
     {message && <div className="toast" onClick={() => setMessage("")}>{message}</div>}
+    {selectedHistoryMetric && <div className="modal-backdrop" onClick={() => setSelectedHistoryMetric(null)}><section className="modal report-modal metric-history-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">每个采样时间点</span><h3>{historyMetricLabel[selectedHistoryMetric]}历史明细</h3></div><button className="modal-close" onClick={() => setSelectedHistoryMetric(null)} aria-label="关闭历史明细">×</button></div>
+      <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={historyRange === value ? "active" : ""} onClick={() => setHistoryRange(Number(value))}>{label}</button>)}</div>
+      <div className="report-scroll metric-history-scroll">{history?.points.length ? <div className="metric-history-table" role="table">
+        <div className="metric-history-row metric-history-head" role="row"><b>采样时间</b>{(["cpuPercent","memoryPercent","diskBps","networkBps"] as HistoryMetricKey[]).map(key => <b key={key} className={selectedHistoryMetric === key ? "selected" : ""}>{historyMetricLabel[key]}</b>)}</div>
+        {[...history.points].reverse().map(point => <div className="metric-history-row" role="row" key={point.capturedAt}><time>{new Date(point.capturedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span className={selectedHistoryMetric === "cpuPercent" ? "selected" : ""}>{point.cpuPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "memoryPercent" ? "selected" : ""}>{point.memoryPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "diskBps" ? "selected" : ""}>{formatRate(point.diskBps)}</span><span className={selectedHistoryMetric === "networkBps" ? "selected" : ""}>{formatRate(point.networkBps)}</span></div>)}
+      </div> : <p className="empty">当前时间范围还没有历史采样数据。</p>}</div>
+    </section></div>}
     {timelineOpen && <div className="modal-backdrop" onClick={() => setTimelineOpen(false)}><section className="modal report-modal timeline-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">本地保存的最近事件</span><h3>🐾 全部巡逻记录</h3></div><button className="modal-close" onClick={() => setTimelineOpen(false)} aria-label="关闭巡逻记录">×</button></div>
       <div className="report-scroll"><ol className="timeline timeline-full">{status.timeline.map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>)}</ol>{!status.timeline.length && <p className="empty">还没有巡逻记录。</p>}</div>
