@@ -1,4 +1,5 @@
 use crate::types::{NetworkConnection, ProgramRisk, ScheduledTask, SecurityReport, StartupEntry, WindowsService};
+use crate::maintenance::disabled_startups;
 use std::{
     collections::HashSet,
     ffi::OsStr,
@@ -234,9 +235,10 @@ pub fn scan_security() -> Result<SecurityReport, String> {
         "low" => 1,
         _ => 2,
     });
-    let mut startup_entries = registry_startups(HKEY_CURRENT_USER, "当前用户");
+    let mut startup_entries = registry_startups(HKEY_CURRENT_USER, "HKEY_CURRENT_USER");
     startup_entries.extend(registry_startups(HKEY_LOCAL_MACHINE, "本机"));
     startup_entries.extend(folder_startups());
+    startup_entries.extend(disabled_startups().into_iter().map(|(name, command)| StartupEntry { name, command, source: "大黄狗\\已禁用".into(), risk_level: "normal".into(), reasons: vec!["当前已禁用，可恢复".into()] }));
     let notable = programs
         .iter()
         .filter(|program| program.risk_level == "medium")

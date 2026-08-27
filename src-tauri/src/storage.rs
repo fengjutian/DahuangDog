@@ -186,7 +186,8 @@ impl Storage {
         let mut statement = self.connection.prepare(
             "SELECT id, kind, severity, title, message, first_seen_at, updated_at, status, note
              FROM alerts WHERE ?1 IS NULL OR status = ?1 ORDER BY updated_at DESC LIMIT 500")?;
-        statement.query_map([status], |row| Ok(AlertRecord { id: row.get(0)?, kind: row.get(1)?, severity: row.get(2)?, title: row.get(3)?, message: row.get(4)?, first_seen_at: row.get(5)?, updated_at: row.get(6)?, status: row.get(7)?, note: row.get(8)? }))?.collect()
+        let alerts = statement.query_map([status], |row| Ok(AlertRecord { id: row.get(0)?, kind: row.get(1)?, severity: row.get(2)?, title: row.get(3)?, message: row.get(4)?, first_seen_at: row.get(5)?, updated_at: row.get(6)?, status: row.get(7)?, note: row.get(8)? }))?.collect();
+        alerts
     }
 
     pub fn update_alert(&self, id: &str, status: &str, note: &str, updated_at: u64) -> Result<(), String> {
@@ -356,7 +357,7 @@ impl Storage {
 
     pub fn clear_memory(&self) -> rusqlite::Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions;",
+            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions; DELETE FROM application_snapshots; DELETE FROM alerts;",
         )
     }
 
@@ -560,5 +561,22 @@ mod tests {
         assert!(!history.points.is_empty());
         assert!(history.points.iter().all(|point| point.disk_bps > 0));
         assert!(history.points.iter().all(|point| point.network_bps == 100));
+    }
+
+    #[test]
+    fn persists_application_metrics_and_alert_workflow() {
+        let storage = Storage::open(PathBuf::from(":memory:")).unwrap();
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        storage.connection.execute("INSERT INTO application_snapshots (captured_at, app_name, root_pid, cpu_percent, memory_bytes, disk_read_bps, disk_write_bps, network_bps) VALUES (?1, 'demo.exe', 7, 25, 1024, 10, 20, NULL)", [now_ms]).unwrap();
+        let history = storage.application_history("demo.exe", 10).unwrap();
+        assert_eq!(history.points.len(), 1);
+        assert_eq!(history.points[0].memory_bytes, 1024);
+
+        let finding = Finding { id: "alert-1".into(), kind: "cpu.sustained_high".into(), severity: "warning".into(), title: "CPU 很忙".into(), message: "测试".into(), first_seen_at: now_ms, evidence: vec![], process: None };
+        storage.save_alert(&finding).unwrap();
+        assert_eq!(storage.alerts(Some("unread")).unwrap().len(), 1);
+        storage.update_alert("alert-1", "acknowledged", "已检查", now_ms + 1).unwrap();
+        let alert = storage.alerts(Some("acknowledged")).unwrap().pop().unwrap();
+        assert_eq!(alert.note, "已检查");
     }
 }

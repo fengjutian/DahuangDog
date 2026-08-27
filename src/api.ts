@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -84,6 +84,33 @@ export async function getHistory(): Promise<HistorySummary> {
 export async function getHistoryRange(rangeMinutes: number): Promise<HistorySummary> {
   return isTauri() ? invoke("get_history_range", { rangeMinutes }) : getHistory();
 }
+
+export async function getApplicationHistory(name: string, rangeMinutes: number): Promise<ApplicationHistory> {
+  if (isTauri()) return invoke("get_application_history", { name, rangeMinutes });
+  const history = await getHistory();
+  return { name, rangeMinutes, points: history.points.map(point => ({ capturedAt: point.capturedAt, cpuPercent: point.cpuPercent / 2, memoryBytes: 1_500_000_000 + point.memoryPercent * 1_000_000, diskReadBps: point.diskBps * .7, diskWriteBps: point.diskBps * .3, networkBps: null })) };
+}
+
+export async function getAlerts(status?: string): Promise<AlertRecord[]> {
+  return isTauri() ? invoke("get_alerts", { status: status || null }) : [];
+}
+
+export async function updateAlert(id: string, status: AlertRecord["status"], note: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke("update_alert", { id, status, note });
+}
+
+export async function getPeriodicPatterns(days = 30): Promise<PeriodicPattern[]> {
+  return isTauri() ? invoke("get_periodic_patterns", { days }) : [];
+}
+
+export async function scanCleanup(): Promise<CleanupReport> {
+  if (!isTauri()) return { scannedAt: Date.now(), reclaimableBytes: 0, candidates: [] };
+  return invoke("scan_cleanup");
+}
+export async function prepareCleanup(paths: string[]): Promise<MaintenancePreview> { return invoke("prepare_cleanup", { paths }); }
+export async function prepareStartupChange(source: string, name: string, command: string, enable: boolean): Promise<MaintenancePreview> { return invoke("prepare_startup_change", { source, name, command, enable }); }
+export async function confirmMaintenance(previewId: string): Promise<ActionResult> { return invoke("confirm_maintenance", { previewId }); }
 
 export async function diagnosePerformance(): Promise<LocalDiagnosis> {
   if (isTauri()) return invoke("diagnose_performance");

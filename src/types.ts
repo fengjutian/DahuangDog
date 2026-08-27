@@ -227,3 +227,6 @@ export interface ApplicationMetricPoint { capturedAt: number; cpuPercent: number
 export interface ApplicationHistory { name: string; rangeMinutes: number; points: ApplicationMetricPoint[]; }
 export interface AlertRecord { id: string; kind: string; severity: "warning" | "critical"; title: string; message: string; firstSeenAt: number; updatedAt: number; status: "unread" | "acknowledged" | "ignored" | "resolved"; note: string; }
 export interface PeriodicPattern { hour: number; sampleCount: number; averageCpuPercent: number; averageMemoryPercent: number; signal: string; }
+export interface CleanupCandidate { path: string; category: string; sizeBytes: number; modifiedAt: number; cleanable: boolean; }
+export interface CleanupReport { scannedAt: number; reclaimableBytes: number; candidates: CleanupCandidate[]; }
+export interface MaintenancePreview { previewId: string; title: string; warning: string; itemCount: number; totalBytes: number; expiresAt: number; }

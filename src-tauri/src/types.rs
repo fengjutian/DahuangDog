@@ -354,3 +354,15 @@ pub struct PeriodicPattern {
     pub average_memory_percent: f32,
     pub signal: String,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupCandidate { pub path: String, pub category: String, pub size_bytes: u64, pub modified_at: u64, pub cleanable: bool }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupReport { pub scanned_at: u64, pub reclaimable_bytes: u64, pub candidates: Vec<CleanupCandidate> }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaintenancePreview { pub preview_id: String, pub title: String, pub warning: String, pub item_count: usize, pub total_bytes: u64, pub expires_at: u64 }

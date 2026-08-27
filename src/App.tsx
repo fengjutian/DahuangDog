@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, exportUsageCsv, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openFileLocation, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
-import type { ActionPreview, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
+import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
+import type { ActionPreview, AlertRecord, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -61,6 +61,12 @@ function linePath(points: MetricPoint[], key: "cpuPercent" | "memoryPercent" | "
   }).join(" ");
 }
 
+function appLinePath(history: ApplicationHistory, key: "cpuPercent" | "memoryBytes" | "diskReadBps" | "diskWriteBps"): string {
+  if (history.points.length < 2) return "";
+  const peak = Math.max(...history.points.map(point => point[key]), 1);
+  return history.points.map((point, index) => `${index ? "L" : "M"}${(index / (history.points.length - 1) * 100).toFixed(2)},${(100 - point[key] / peak * 100).toFixed(2)}`).join(" ");
+}
+
 function TrendChart({ history, range, onRange }: { history: HistorySummary; range: number; onRange: (range: number) => void }) {
   return <section className="card trend-card">
     <div className="section-title"><h3>资源趋势</h3><div className="range-tabs">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={range === value ? "active" : ""} onClick={() => onRange(Number(value))}>{label}</button>)}</div></div>
@@ -100,6 +106,13 @@ export default function App() {
   const [processQuery, setProcessQuery] = useState("");
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [selectedHistoryMetric, setSelectedHistoryMetric] = useState<HistoryMetricKey | null>(null);
+  const [appHistory, setAppHistory] = useState<ApplicationHistory | null>(null);
+  const [appHistoryRange, setAppHistoryRange] = useState(60);
+  const [alerts, setAlerts] = useState<AlertRecord[] | null>(null);
+  const [alertFilter, setAlertFilter] = useState("");
+  const [patterns, setPatterns] = useState<PeriodicPattern[] | null>(null);
+  const [cleanup, setCleanup] = useState<CleanupReport | null>(null);
+  const [cleanupSelection, setCleanupSelection] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -138,6 +151,51 @@ export default function App() {
 
   async function inspect(process: ProcessSample) {
     setSelected(process);
+  }
+
+  async function showApplicationHistory(name: string, range = appHistoryRange) {
+    setBusy(true);
+    try { setAppHistoryRange(range); setAppHistory(await getApplicationHistory(name, range)); setSelected(null); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function showAlerts(filter = alertFilter) {
+    setBusy(true);
+    try { setAlertFilter(filter); setAlerts(await getAlerts(filter)); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function changeAlert(alert: AlertRecord, next: AlertRecord["status"]) {
+    const note = window.prompt("处理备注（可留空）", alert.note) ?? alert.note;
+    try { await updateAlert(alert.id, next, note); await showAlerts(); }
+    catch (error) { setMessage(String(error)); }
+  }
+
+  async function showPatterns() {
+    setBusy(true);
+    try { setPatterns(await getPeriodicPatterns(30)); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function showCleanup() {
+    setBusy(true);
+    try { const report = await scanCleanup(); setCleanup(report); setCleanupSelection(report.candidates.filter(item => item.cleanable).map(item => item.path)); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function cleanSelected() {
+    try { const preview = await prepareCleanup(cleanupSelection); if (!window.confirm(`${preview.title}\n${preview.itemCount} 个文件，共 ${formatBytes(preview.totalBytes)}\n\n${preview.warning}`)) return; const result = await confirmMaintenance(preview.previewId); setMessage(result.message); await showCleanup(); }
+    catch (error) { setMessage(String(error)); }
+  }
+
+  async function changeStartup(entry: StartupEntry) {
+    const enable = entry.source === "大黄狗\\已禁用";
+    try { const preview = await prepareStartupChange(entry.source, entry.name, entry.command, enable); if (!window.confirm(`${preview.title}\n\n${preview.warning}`)) return; const result = await confirmMaintenance(preview.previewId); setMessage(result.message); setSecurity(await getSecurityReport()); }
+    catch (error) { setMessage(String(error)); }
   }
 
   async function requestTerminate(process: ProcessSample) {
@@ -242,7 +300,7 @@ export default function App() {
   }).slice(0, 8) ?? [];
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -315,6 +373,25 @@ export default function App() {
       <div className="section-title"><div><span className="eyebrow">本地保存的最近事件</span><h3>🐾 全部巡逻记录</h3></div><button className="modal-close" onClick={() => setTimelineOpen(false)} aria-label="关闭巡逻记录">×</button></div>
       <div className="report-scroll"><ol className="timeline timeline-full">{status.timeline.map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>)}</ol>{!status.timeline.length && <p className="empty">还没有巡逻记录。</p>}</div>
     </section></div>}
+    {appHistory && <div className="modal-backdrop" onClick={() => setAppHistory(null)}><section className="modal report-modal app-history-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={() => setAppHistory(null)} aria-label="关闭应用历史">×</button></div>
+      <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([range,label]) => <button className={appHistoryRange === range ? "active" : ""} key={range} onClick={() => void showApplicationHistory(appHistory.name, Number(range))}>{label}</button>)}</div>
+      <div className="report-scroll"><div className="app-history-charts">{([['cpuPercent','CPU'],['memoryBytes','内存'],['diskReadBps','磁盘读取'],['diskWriteBps','磁盘写入']] as const).map(([key,label]) => <article key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d={appLinePath(appHistory,key)} /></svg><small>{appHistory.points.length} 个采样点</small></article>)}</div>{!appHistory.points.length && <p className="empty">该应用在所选范围内还没有历史数据，保持运行一会儿后会自动积累。</p>}</div>
+    </section></div>}
+    {alerts && <div className="modal-backdrop" onClick={() => setAlerts(null)}><section className="modal report-modal alert-center" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">持久化处理记录</span><h3>🔔 告警中心</h3></div><button className="modal-close" onClick={() => setAlerts(null)} aria-label="关闭告警中心">×</button></div>
+      <div className="report-filters">{[["","全部"],["unread","未读"],["acknowledged","已确认"],["ignored","已忽略"],["resolved","已恢复"]].map(([key,label]) => <button key={key} className={alertFilter === key ? "active" : ""} onClick={() => void showAlerts(key)}>{label}</button>)}</div>
+      <div className="report-scroll alert-list">{alerts.map(alert => <article key={alert.id} className={`alert-row ${alert.severity}`}><div><span>{alert.status}</span><b>{alert.title}</b><p>{alert.message}</p><small>{new Date(alert.firstSeenAt).toLocaleString("zh-CN")}{alert.note && ` · 备注：${alert.note}`}</small></div><div><button onClick={() => void changeAlert(alert,"acknowledged")}>确认</button><button onClick={() => void changeAlert(alert,"ignored")}>忽略</button></div></article>)}{!alerts.length && <p className="empty">当前筛选条件下没有告警。</p>}</div>
+    </section></div>}
+    {patterns && <div className="modal-backdrop" onClick={() => setPatterns(null)}><section className="modal report-modal pattern-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">最近 30 天本地分析</span><h3>🕒 周期规律</h3></div><button className="modal-close" onClick={() => setPatterns(null)} aria-label="关闭周期规律">×</button></div>
+      <div className="report-scroll pattern-list">{patterns.map(pattern => <article key={pattern.hour}><b>{String(pattern.hour).padStart(2,"0")}:00–{String((pattern.hour+1)%24).padStart(2,"0")}:00</b><span>{pattern.signal}</span><small>CPU {pattern.averageCpuPercent.toFixed(1)}% · 内存 {pattern.averageMemoryPercent.toFixed(1)}% · {pattern.sampleCount} 个样本</small></article>)}{!patterns.length && <p className="empty">暂未发现稳定的周期性高负载，需要积累更多跨天样本。</p>}</div>
+    </section></div>}
+    {cleanup && <div className="modal-backdrop" onClick={() => setCleanup(null)}><section className="modal report-modal cleanup-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">只读扫描 · 删除前再次确认</span><h3>🧹 磁盘清理助手</h3></div><button className="modal-close" onClick={() => setCleanup(null)} aria-label="关闭清理助手">×</button></div>
+      <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>下载目录大文件仅供查看，不能在这里删除。</span><button disabled={!cleanupSelection.length} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.length} 项</button></div>
+      <div className="report-scroll cleanup-list">{cleanup.candidates.map(item => <label key={item.path}><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.includes(item.path)} onChange={event => setCleanupSelection(event.target.checked ? [...cleanupSelection,item.path] : cleanupSelection.filter(path => path !== item.path))}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可清理" : "只读"}</span></label>)}{!cleanup.candidates.length && <p className="empty">没有发现符合条件的临时文件或大文件。</p>}</div>
+    </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>
       <div className="report-scroll"><div className="report-tabs hardware-tabs" role="tablist">{([['cpu','CPU 核心'],['gpu','GPU'],['power','电池与传感器'],['disks','磁盘分区'],['network','网络适配器'],['apps','应用资源']] as const).map(([key,label]) => <button key={key} className={hardwareTab === key ? "active" : ""} onClick={() => setHardwareTab(key)}>{label}</button>)}</div>
@@ -349,7 +426,7 @@ export default function App() {
         </article>)}</div>}
         {!visiblePrograms.length && <p className="empty">当前筛选条件下没有程序。</p>}</div>}
         {securityTab === "startup" && <div className="security-tab-panel security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
-          <span className={`risk-pill ${entry.riskLevel}`}>{entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>
+          <span className={`risk-pill ${entry.riskLevel}`}>{entry.source === "大黄狗\\已禁用" ? "已禁用" : entry.riskLevel === "medium" ? "需确认" : "正常"}</span><div><b>{entry.name}</b><code>{entry.command}</code><small>{entry.source}{entry.reasons.length ? ` · ${entry.reasons.join(" · ")}` : ""}</small></div>{(entry.source.startsWith("HKEY_CURRENT_USER") || entry.source === "大黄狗\\已禁用") && <button className="reveal-file" onClick={() => void changeStartup(entry)}>{entry.source === "大黄狗\\已禁用" ? "启用" : "禁用"}</button>}
         </article>) : <p className="empty">没有读取到常见启动项。</p>}</div>}
         {securityTab === "network" && <div className="security-tab-panel security-group"><h4>监听端口与网络连接</h4>{security.networkConnections.map(connection => <article className="inventory-row" key={`${connection.protocol}-${connection.localAddress}-${connection.remoteAddress}-${connection.pid}`}><b>{connection.processName}</b><code>{connection.localAddress} → {connection.remoteAddress}</code><span>PID {connection.pid} · {connection.state}</span></article>)}{!security.networkConnections.length && <p className="empty">没有读取到 TCP 连接。</p>}</div>}
         {securityTab === "tasks" && <div className="security-tab-panel security-group"><h4>计划任务</h4>{security.scheduledTasks.map(task => <article className="inventory-row" key={task.path}><b>{task.name}</b><code>{task.path}</code></article>)}{!security.scheduledTasks.length && <p className="empty">没有读取到计划任务，部分目录可能需要管理员权限。</p>}</div>}
@@ -391,7 +468,7 @@ export default function App() {
     </section></div>}
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>
       <span className="risk">进程操作</span><h3>{selected.name}</h3><p>PID {selected.pid} · CPU {selected.cpuPercent.toFixed(1)}% · {formatBytes(selected.memoryBytes)}</p>
-      <div className="process-action-list"><button onClick={() => reveal(selected)}>📂 打开文件位置 <small>只读操作</small></button><button onClick={() => requestPriority(selected, "belowNormal")}>⬇ 调低优先级 <small>需要确认</small></button><button onClick={() => requestPriority(selected, "normal")}>↔ 恢复正常优先级 <small>需要确认</small></button><button className="danger-row" onClick={() => requestTerminate(selected)}>结束进程 <small>可能丢失未保存内容</small></button></div>
+      <div className="process-action-list"><button onClick={() => void showApplicationHistory(selected.name)}>📈 查看历史曲线 <small>只读操作</small></button><button onClick={() => reveal(selected)}>📂 打开文件位置 <small>只读操作</small></button><button onClick={() => requestPriority(selected, "belowNormal")}>⬇ 调低优先级 <small>需要确认</small></button><button onClick={() => requestPriority(selected, "normal")}>↔ 恢复正常优先级 <small>需要确认</small></button><button className="danger-row" onClick={() => requestTerminate(selected)}>结束进程 <small>可能丢失未保存内容</small></button></div>
       <div className="actions"><button className="secondary" onClick={() => setSelected(null)}>取消</button></div>
     </section></div>}
     {settingsOpen && settings && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="modal settings-modal" onClick={e => e.stopPropagation()}>

@@ -1,9 +1,9 @@
 use crate::storage::Storage;
 use crate::types::{
-    ActionPreview, ActionResult, AppUsageRecord, ApplicationGroup, CurrentStatus, Finding,
+    ActionPreview, ActionResult, AlertRecord, AppUsageRecord, ApplicationGroup, ApplicationHistory, CurrentStatus, Finding,
     BatteryMetric, CpuCoreMetric, DiskMetric, FanMetric, GpuMetric, HardwareSnapshot,
     HistorySummary, LocalDiagnosis, NetworkMetric, ProcessSample, SystemSnapshot, TemperatureMetric,
-    TimelineEvent, UserSettings, VerificationStatus,
+    PeriodicPattern, TimelineEvent, UserSettings, VerificationStatus,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -759,7 +759,7 @@ impl Monitor {
         let cpu_recovered = snapshot.cpu_percent < self.settings.cpu_threshold - 15.0;
         let memory_recovered = snapshot.memory_percent < self.settings.memory_threshold - 10.0;
         let disk_space_recovered = lowest_disk_pressure(snapshot).is_none();
-        let before = self.findings.len();
+        let previous_findings = self.findings.clone();
         self.findings.retain(|f| {
             !(f.kind == "cpu.sustained_high" && cpu_recovered
                 || f.kind == "memory.pressure" && memory_recovered
@@ -771,7 +771,12 @@ impl Monitor {
                         !growing_keys.contains(&(process.pid, process.started_at))
                     }))
         });
-        if before > self.findings.len() {
+        if previous_findings.len() > self.findings.len() {
+            if let Some(storage) = &self.storage {
+                for finding in previous_findings.iter().filter(|old| !self.findings.iter().any(|current| current.id == old.id)) {
+                    let _ = storage.resolve_alert(&finding.id, now() * 1000);
+                }
+            }
             self.push_event("resolved", "刚才的资源压力已经恢复");
         }
     }
@@ -822,7 +827,7 @@ impl Monitor {
             return;
         }
         self.last_alert_at.insert(kind.into(), current);
-        self.findings.push(Finding {
+        let finding = Finding {
             id: Uuid::new_v4().to_string(),
             kind: kind.into(),
             severity: severity.into(),
@@ -831,7 +836,9 @@ impl Monitor {
             first_seen_at: now() * 1000,
             evidence,
             process,
-        });
+        };
+        if let Some(storage) = &self.storage { let _ = storage.save_alert(&finding); }
+        self.findings.push(finding);
         self.push_event("finding", &format!("发现异常：{title}。正在调查原因"));
     }
 
@@ -921,6 +928,22 @@ impl Monitor {
     pub fn history_range(&self, range_minutes: u32) -> Result<HistorySummary, String> {
         self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?
             .history_range(range_minutes).map_err(|error| format!("读取趋势失败：{error}"))
+    }
+
+    pub fn application_history(&self, name: &str, range_minutes: u32) -> Result<ApplicationHistory, String> {
+        self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?.application_history(name, range_minutes).map_err(|error| format!("读取应用历史失败：{error}"))
+    }
+
+    pub fn alerts(&self, status: Option<&str>) -> Result<Vec<AlertRecord>, String> {
+        self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?.alerts(status).map_err(|error| format!("读取告警失败：{error}"))
+    }
+
+    pub fn update_alert(&mut self, id: &str, status: &str, note: &str) -> Result<(), String> {
+        self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?.update_alert(id, status, note, now() * 1000)
+    }
+
+    pub fn periodic_patterns(&self, days: u32) -> Result<Vec<PeriodicPattern>, String> {
+        self.storage.as_ref().ok_or("本地记忆暂时不可用".to_string())?.periodic_patterns(days).map_err(|error| format!("分析周期规律失败：{error}"))
     }
 
     pub fn diagnose(&self) -> LocalDiagnosis {

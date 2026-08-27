@@ -1,4 +1,5 @@
 mod monitor;
+mod maintenance;
 mod security;
 mod storage;
 mod types;
@@ -20,11 +21,12 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 use types::{
-    ActionPreview, ActionResult, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary,
-    LocalDiagnosis, SecurityReport, UserSettings,
+    ActionPreview, ActionResult, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory,
+    CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings,
 };
 
 type SharedMonitor = Arc<Mutex<Monitor>>;
+type SharedMaintenance = Arc<Mutex<maintenance::MaintenanceManager>>;
 
 #[tauri::command]
 fn get_current_status(state: tauri::State<'_, SharedMonitor>) -> Result<CurrentStatus, String> {
@@ -71,6 +73,26 @@ fn get_history_range(range_minutes: u32, state: tauri::State<'_, SharedMonitor>)
 }
 
 #[tauri::command]
+fn get_application_history(name: String, range_minutes: u32, state: tauri::State<'_, SharedMonitor>) -> Result<ApplicationHistory, String> {
+    state.lock().map_err(|_| "监控状态暂时不可用".to_string())?.application_history(&name, range_minutes)
+}
+
+#[tauri::command]
+fn get_alerts(status: Option<String>, state: tauri::State<'_, SharedMonitor>) -> Result<Vec<AlertRecord>, String> {
+    state.lock().map_err(|_| "监控状态暂时不可用".to_string())?.alerts(status.as_deref())
+}
+
+#[tauri::command]
+fn update_alert(id: String, status: String, note: String, state: tauri::State<'_, SharedMonitor>) -> Result<(), String> {
+    state.lock().map_err(|_| "监控状态暂时不可用".to_string())?.update_alert(&id, &status, &note)
+}
+
+#[tauri::command]
+fn get_periodic_patterns(days: u32, state: tauri::State<'_, SharedMonitor>) -> Result<Vec<PeriodicPattern>, String> {
+    state.lock().map_err(|_| "监控状态暂时不可用".to_string())?.periodic_patterns(days)
+}
+
+#[tauri::command]
 fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalDiagnosis, String> {
     Ok(state
         .lock()
@@ -81,6 +103,24 @@ fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalD
 #[tauri::command]
 fn get_security_report() -> Result<SecurityReport, String> {
     security::scan_security()
+}
+
+#[tauri::command]
+fn scan_cleanup() -> Result<CleanupReport, String> { Ok(maintenance::scan_cleanup()) }
+
+#[tauri::command]
+fn prepare_cleanup(paths: Vec<String>, state: tauri::State<'_, SharedMaintenance>) -> Result<MaintenancePreview, String> {
+    state.lock().map_err(|_| "维护状态暂时不可用".to_string())?.prepare_cleanup(paths)
+}
+
+#[tauri::command]
+fn prepare_startup_change(source: String, name: String, command: String, enable: bool, state: tauri::State<'_, SharedMaintenance>) -> Result<MaintenancePreview, String> {
+    state.lock().map_err(|_| "维护状态暂时不可用".to_string())?.prepare_startup(source, name, command, enable)
+}
+
+#[tauri::command]
+fn confirm_maintenance(preview_id: String, state: tauri::State<'_, SharedMaintenance>) -> Result<ActionResult, String> {
+    state.lock().map_err(|_| "维护状态暂时不可用".to_string())?.confirm(&preview_id)
 }
 
 #[tauri::command]
@@ -216,15 +256,25 @@ fn show_main_window(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let monitor = Arc::new(Mutex::new(Monitor::new()));
+    let maintenance = Arc::new(Mutex::new(maintenance::MaintenanceManager::new()));
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(monitor.clone())
+        .manage(maintenance)
         .invoke_handler(tauri::generate_handler![
             get_current_status,
             prepare_terminate_process,
             confirm_action,
             get_history,
             get_history_range,
+            get_application_history,
+            get_alerts,
+            update_alert,
+            get_periodic_patterns,
+            scan_cleanup,
+            prepare_cleanup,
+            prepare_startup_change,
+            confirm_maintenance,
             diagnose_performance,
             get_security_report,
             open_file_location,
