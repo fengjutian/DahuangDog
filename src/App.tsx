@@ -9,6 +9,13 @@ const stateLabel: Record<string, string> = {
   verifying: "正在确认效果", resolved: "问题解决"
 };
 
+const timelineKindLabel: Record<string, string> = {
+  patrol: "巡逻",
+  finding: "发现",
+  action: "操作",
+  resolved: "恢复"
+};
+
 function formatBytes(value: number): string {
   if (!Number.isFinite(value)) return "--";
   const gb = value / 1024 / 1024 / 1024;
@@ -80,6 +87,7 @@ export default function App() {
   const [hardwareOpen, setHardwareOpen] = useState(false);
   const [hardwareTab, setHardwareTab] = useState<"cpu" | "gpu" | "power" | "disks" | "network" | "apps">("cpu");
   const [processQuery, setProcessQuery] = useState("");
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -277,12 +285,16 @@ export default function App() {
         </div>)}{!visibleApplications.length && <p className="empty">{normalizedProcessQuery ? "没有找到匹配的应用或进程。" : "还没有采集到应用数据。"}</p>}</div>
       </section>
 
-      <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><span>最近事件</span></div>
+      <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><div className="timeline-title-actions"><span>最近事件</span>{status.timeline.length > 8 && <button onClick={() => setTimelineOpen(true)}>查看全部 {status.timeline.length} 条</button>}</div></div>
         <ol className="timeline">{status.timeline.slice(0, 8).map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{item.message}</span></li>)}</ol>
       </section>
     </div>
 
     {message && <div className="toast" onClick={() => setMessage("")}>{message}</div>}
+    {timelineOpen && <div className="modal-backdrop" onClick={() => setTimelineOpen(false)}><section className="modal report-modal timeline-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">本地保存的最近事件</span><h3>🐾 全部巡逻记录</h3></div><button className="modal-close" onClick={() => setTimelineOpen(false)} aria-label="关闭巡逻记录">×</button></div>
+      <div className="report-scroll"><ol className="timeline timeline-full">{status.timeline.map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>)}</ol>{!status.timeline.length && <p className="empty">还没有巡逻记录。</p>}</div>
+    </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>
       <div className="report-scroll"><div className="report-tabs hardware-tabs" role="tablist">{([['cpu','CPU 核心'],['gpu','GPU'],['power','电池与传感器'],['disks','磁盘分区'],['network','网络适配器'],['apps','应用资源']] as const).map(([key,label]) => <button key={key} className={hardwareTab === key ? "active" : ""} onClick={() => setHardwareTab(key)}>{label}</button>)}</div>
