@@ -207,6 +207,42 @@ fn memory_growth(history: &VecDeque<(u64, u64)>) -> Option<(u64, u64)> {
     .then_some((growth, last_at.saturating_sub(first_at)))
 }
 
+fn disk_space_pressure(available_bytes: u64, total_bytes: u64) -> Option<(f64, &'static str)> {
+    if total_bytes == 0 {
+        return None;
+    }
+    let free_percent = available_bytes as f64 / total_bytes as f64 * 100.0;
+    if free_percent < 5.0 {
+        Some((free_percent, "critical"))
+    } else if free_percent < 10.0 {
+        Some((free_percent, "warning"))
+    } else {
+        None
+    }
+}
+
+fn lowest_disk_pressure(snapshot: &SystemSnapshot) -> Option<(&DiskMetric, f64, &'static str)> {
+    snapshot
+        .hardware
+        .disks
+        .iter()
+        .filter_map(|disk| {
+            disk_space_pressure(disk.available_bytes, disk.total_bytes)
+                .map(|(percent, severity)| (disk, percent, severity))
+        })
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+}
+
+fn snapshot_health_score(snapshot: &SystemSnapshot) -> u8 {
+    let resource_score = (100.0 - snapshot.cpu_percent.max(snapshot.memory_percent) * 0.55)
+        .clamp(0.0, 100.0) as u8;
+    match lowest_disk_pressure(snapshot) {
+        Some((_, _, "critical")) => resource_score.min(45),
+        Some(_) => resource_score.min(70),
+        None => resource_score,
+    }
+}
+
 #[derive(Clone)]
 struct PendingAction {
     preview: ActionPreview,
@@ -570,6 +606,34 @@ impl Monitor {
             );
         }
 
+        if let Some((disk, free_percent, severity)) = lowest_disk_pressure(snapshot) {
+            if let Some(finding) = self
+                .findings
+                .iter_mut()
+                .find(|finding| finding.kind == "disk.space_low")
+            {
+                finding.severity = severity.into();
+                finding.message = format!("{} 只剩 {:.1}% 可用空间。", disk.mount_point, free_percent);
+            } else {
+                self.add_finding_with_severity(
+                    "disk.space_low",
+                    severity,
+                    "磁盘空间快用完了",
+                    format!("{} 只剩 {:.1}% 可用空间。", disk.mount_point, free_percent),
+                    vec![
+                        format!("剩余 {:.1}%", free_percent),
+                        format!(
+                            "可用 {:.1} GB / 总计 {:.1} GB",
+                            disk.available_bytes as f64 / 1024.0 / 1024.0 / 1024.0,
+                            disk.total_bytes as f64 / 1024.0 / 1024.0 / 1024.0
+                        ),
+                        "低于 10% 时会影响更新、缓存和部分应用写入".into(),
+                    ],
+                    None,
+                );
+            }
+        }
+
         let disk_bps = snapshot
             .disk_read_bps
             .saturating_add(snapshot.disk_write_bps) as f64;
@@ -694,10 +758,12 @@ impl Monitor {
 
         let cpu_recovered = snapshot.cpu_percent < self.settings.cpu_threshold - 15.0;
         let memory_recovered = snapshot.memory_percent < self.settings.memory_threshold - 10.0;
+        let disk_space_recovered = lowest_disk_pressure(snapshot).is_none();
         let before = self.findings.len();
         self.findings.retain(|f| {
             !(f.kind == "cpu.sustained_high" && cpu_recovered
                 || f.kind == "memory.pressure" && memory_recovered
+                || f.kind == "disk.space_low" && disk_space_recovered
                 || f.kind == "disk.io_spike" && self.disk_anomaly_samples == 0
                 || f.kind == "network.traffic_spike" && self.network_anomaly_samples == 0
                 || f.kind.starts_with("process.memory_growth:")
@@ -735,6 +801,18 @@ impl Monitor {
         evidence: Vec<String>,
         process: Option<ProcessSample>,
     ) {
+        self.add_finding_with_severity(kind, "warning", title, message, evidence, process);
+    }
+
+    fn add_finding_with_severity(
+        &mut self,
+        kind: &str,
+        severity: &str,
+        title: &str,
+        message: String,
+        evidence: Vec<String>,
+        process: Option<ProcessSample>,
+    ) {
         let current = now();
         if self
             .last_alert_at
@@ -747,7 +825,7 @@ impl Monitor {
         self.findings.push(Finding {
             id: Uuid::new_v4().to_string(),
             kind: kind.into(),
-            severity: "warning".into(),
+            severity: severity.into(),
             title: title.into(),
             message: message.clone(),
             first_seen_at: now() * 1000,
@@ -820,14 +898,11 @@ impl Monitor {
             ("investigating", "我闻到一点异常，已经找到最可疑的目标。")
         };
         let snapshot = self.snapshot.clone();
-        let pressure = snapshot
-            .as_ref()
-            .map(|s| s.cpu_percent.max(s.memory_percent))
-            .unwrap_or(0.0);
+        let health_score = snapshot.as_ref().map(snapshot_health_score).unwrap_or(100);
         CurrentStatus {
             dog_state: dog_state.into(),
             summary: summary.into(),
-            health_score: (100.0 - pressure * 0.55).clamp(0.0, 100.0) as u8,
+            health_score,
             snapshot,
             findings: self.findings.clone(),
             timeline: self.timeline.iter().cloned().collect(),
@@ -870,7 +945,19 @@ impl Monitor {
                 application.memory_bytes as f64 / 1024.0 / 1024.0 / 1024.0
             ));
         }
-        let (summary, suggestions, confidence) = if snapshot.memory_percent >= 90.0 {
+        let (summary, suggestions, confidence) = if let Some((disk, free_percent, _)) =
+            lowest_disk_pressure(snapshot)
+        {
+            details.push(format!("{} 只剩 {:.1}% 可用空间", disk.mount_point, free_percent));
+            (
+                "主人，我找到一个明确问题：磁盘空间快用完了。",
+                vec![
+                    "先清理下载目录、回收站和不再使用的大文件".into(),
+                    "为系统盘保留至少 10% 可用空间".into(),
+                ],
+                "high",
+            )
+        } else if snapshot.memory_percent >= 90.0 {
             (
                 "主人，我找到原因了：电脑现在主要是内存压力太大。",
                 vec![
@@ -1287,5 +1374,13 @@ mod tests {
         let (growth, duration) = memory_growth(&history).unwrap();
         assert_eq!(growth, 2 * 1024 * 1024 * 1024);
         assert_eq!(duration, 20 * 60);
+    }
+
+    #[test]
+    fn disk_space_pressure_has_warning_and_critical_levels() {
+        assert_eq!(disk_space_pressure(9, 100), Some((9.0, "warning")));
+        assert_eq!(disk_space_pressure(4, 100), Some((4.0, "critical")));
+        assert_eq!(disk_space_pressure(10, 100), None);
+        assert_eq!(disk_space_pressure(0, 0), None);
     }
 }

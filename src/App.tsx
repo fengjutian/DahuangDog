@@ -335,7 +335,7 @@ export default function App() {
       </div>
       {usageTab === "charts" && usageSummary && <div className="usage-tab-panel" role="tabpanel">
         <div className="usage-summary">
-          <div><b>{formatDuration(usageSummary.totalForegroundSeconds)}</b><span>近 7 天前台使用</span></div>
+          <div><b>{formatDuration(usageSummary.totalForegroundSeconds)}</b><span>近 {usageSummary.periodDays} 天前台使用</span></div>
           <div><b>{formatDuration(usageSummary.totalBackgroundSeconds)}</b><span>后台运行</span></div>
           <div><b>{usageSummary.applicationCount}</b><span>使用过的应用</span></div>
           <div><b>{usageSummary.longestUsedApp ?? "暂无"}</b><span>最常使用</span></div>
