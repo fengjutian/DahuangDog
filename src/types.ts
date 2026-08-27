@@ -199,6 +199,7 @@ export interface UserSettings {
   lowPowerMode: boolean;
   notificationsEnabled: boolean;
   retentionDays: number;
+  autoStart: boolean;
 }
 
 export interface AppUsageRecord {

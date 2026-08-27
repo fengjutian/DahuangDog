@@ -111,7 +111,12 @@ export async function openFileLocation(path: string): Promise<ActionResult> {
   return invoke("open_file_location", { path });
 }
 
-const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7 };
+export async function exportUsageCsv(content: string): Promise<ActionResult> {
+  if (!isTauri()) throw new Error("浏览器预览模式不能写入下载目录");
+  return invoke("export_usage_csv", { content });
+}
+
+const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false };
 
 export async function getSettings(): Promise<UserSettings> {
   return isTauri() ? invoke("get_settings") : demoSettings;

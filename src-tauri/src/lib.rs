@@ -18,6 +18,7 @@ use tauri::{
     Emitter, Manager,
 };
 use tauri_plugin_notification::NotificationExt;
+use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 use types::{
     ActionPreview, ActionResult, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary,
     LocalDiagnosis, SecurityReport, UserSettings,
@@ -103,6 +104,20 @@ fn open_file_location(path: String) -> Result<ActionResult, String> {
 }
 
 #[tauri::command]
+fn export_usage_csv(content: String) -> Result<ActionResult, String> {
+    if content.len() > 10 * 1024 * 1024 { return Err("导出内容超过 10 MB 限制".into()); }
+    let downloads = std::env::var_os("USERPROFILE").map(PathBuf::from)
+        .ok_or("无法定位当前用户目录")?.join("Downloads");
+    if !downloads.is_dir() { return Err("下载目录不存在或无法访问".into()); }
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let target = downloads.join(format!("大黄狗-应用使用记录-{timestamp}.csv"));
+    std::fs::write(&target, format!("\u{feff}{content}")).map_err(|error| format!("导出失败：{error}"))?;
+    Command::new("explorer.exe").arg(format!("/select,{}", target.display())).spawn()
+        .map_err(|error| format!("文件已导出，但无法打开资源管理器：{error}"))?;
+    Ok(ActionResult { action_id: uuid::Uuid::new_v4().to_string(), success: true, message: format!("已导出到 {}", target.display()) })
+}
+
+#[tauri::command]
 fn get_settings(state: tauri::State<'_, SharedMonitor>) -> Result<UserSettings, String> {
     Ok(state
         .lock()
@@ -115,10 +130,25 @@ fn update_settings(
     settings: UserSettings,
     state: tauri::State<'_, SharedMonitor>,
 ) -> Result<UserSettings, String> {
+    configure_auto_start(settings.auto_start)?;
     state
         .lock()
         .map_err(|_| "监控状态暂时不可用".to_string())?
         .update_settings(settings)
+}
+
+fn configure_auto_start(enabled: bool) -> Result<(), String> {
+    let current = std::env::current_exe().map_err(|error| format!("无法读取程序路径：{error}"))?;
+    let root = RegKey::predef(HKEY_CURRENT_USER);
+    let (run, _) = root.create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
+        .map_err(|error| format!("无法打开开机启动设置：{error}"))?;
+    if enabled {
+        run.set_value("DahuangDog", &format!("\"{}\" --background", current.display()))
+            .map_err(|error| format!("无法启用开机自启动：{error}"))?;
+    } else if run.get_raw_value("DahuangDog").is_ok() {
+        run.delete_value("DahuangDog").map_err(|error| format!("无法关闭开机自启动：{error}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -198,6 +228,7 @@ pub fn run() {
             diagnose_performance,
             get_security_report,
             open_file_location,
+            export_usage_csv,
             get_settings,
             update_settings,
             clear_local_memory,
@@ -208,14 +239,21 @@ pub fn run() {
         ])
         .setup(move |app| {
             let open = MenuItem::with_id(app, "open", "打开大黄狗", true, None::<&str>)?;
+            let hardware = MenuItem::with_id(app, "hardware", "硬件监控", true, None::<&str>)?;
+            let usage = MenuItem::with_id(app, "usage", "使用记录", true, None::<&str>)?;
+            let security = MenuItem::with_id(app, "security", "看门报告", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &hardware, &usage, &security, &quit])?;
             let mut tray = TrayIconBuilder::with_id("main-tray")
                 .menu(&menu)
                 .tooltip("大黄狗正在巡逻")
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "open" => show_main_window(app),
+                    "hardware" | "usage" | "security" => {
+                        show_main_window(app);
+                        let _ = app.emit("ui://open-panel", event.id().as_ref());
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -238,6 +276,9 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+            if std::env::args().any(|argument| argument == "--background") {
+                if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
+            }
 
             let app_handle = app.handle().clone();
             let monitor = monitor.clone();

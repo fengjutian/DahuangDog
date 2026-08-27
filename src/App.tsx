@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openFileLocation, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import { clearLocalMemory, confirmAction, diagnosePerformance, exportUsageCsv, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getSecurityReport, getSettings, openFileLocation, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
 import type { ActionPreview, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
@@ -74,6 +74,7 @@ export default function App() {
   const [usageSummary, setUsageSummary] = useState<AppUsageSummary | null>(null);
   const [usageQuery, setUsageQuery] = useState("");
   const [usageTab, setUsageTab] = useState<"charts" | "list">("charts");
+  const [usagePeriod, setUsagePeriod] = useState(7);
   const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
   const [securityTab, setSecurityTab] = useState<"overview" | "programs" | "startup" | "network" | "tasks" | "services">("overview");
   const [hardwareOpen, setHardwareOpen] = useState(false);
@@ -102,6 +103,17 @@ export default function App() {
   }, [historyRange]);
 
   useEffect(() => { void getSettings().then(setSettings).catch(() => undefined); }, []);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let unlisten: undefined | (() => void);
+    void listen<string>("ui://open-panel", event => {
+      if (event.payload === "hardware") setHardwareOpen(true);
+      if (event.payload === "usage") void showUsage();
+      if (event.payload === "security") void scanSecurity();
+    }).then(fn => { unlisten = fn; });
+    return () => unlisten?.();
+  }, []);
 
   async function inspect(process: ProcessSample) {
     setSelected(process);
@@ -170,7 +182,7 @@ export default function App() {
   async function showUsage() {
     setBusy(true);
     try {
-      const [records, summary] = await Promise.all([getAppUsageHistory(), getAppUsageSummary(7)]);
+      const [records, summary] = await Promise.all([getAppUsageHistory(), getAppUsageSummary(usagePeriod)]);
       setUsage(records);
       setUsageSummary(summary);
     }
@@ -178,9 +190,26 @@ export default function App() {
     finally { setBusy(false); }
   }
 
+  async function changeUsagePeriod(period: number) {
+    setUsagePeriod(period);
+    setBusy(true);
+    try { setUsageSummary(await getAppUsageSummary(period)); }
+    catch (error) { setMessage(String(error)); }
+    finally { setBusy(false); }
+  }
+
+  async function exportUsage() {
+    const rows = visibleUsage.map(record => [record.name, record.rootPid, new Date(record.startedAt).toLocaleString("zh-CN"), record.closedAt ? new Date(record.closedAt).toLocaleString("zh-CN") : "运行中", record.runtimeSeconds, record.foregroundSeconds, record.backgroundSeconds, record.memberPeak]);
+    const escape = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
+    const csv = [["应用", "PID", "启动时间", "关闭时间", "运行秒数", "前台秒数", "后台秒数", "进程峰值"], ...rows].map(row => row.map(escape).join(",")).join("\r\n");
+    try { const result = await exportUsageCsv(csv); setMessage(result.message); }
+    catch (error) { setMessage(String(error)); }
+  }
+
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
-  const visibleUsage = usage?.filter(record => record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
+  const usageSince = Date.now() - usagePeriod * 24 * 60 * 60 * 1000;
+  const visibleUsage = usage?.filter(record => record.lastSeenAt >= usageSince && record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
   const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
 
   return <main className="shell">
@@ -328,6 +357,7 @@ export default function App() {
       <label>历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
       <label className="check"><input type="checkbox" checked={settings.lowPowerMode} onChange={e => setSettings({...settings, lowPowerMode: e.target.checked})} />低功耗模式（固定每 15 秒巡逻）</label>
       <label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={e => setSettings({...settings, notificationsEnabled: e.target.checked})} />Windows 异常通知</label>
+      <label className="check"><input type="checkbox" checked={settings.autoStart} onChange={e => setSettings({...settings, autoStart: e.target.checked})} />登录 Windows 后自动在托盘巡逻</label>
       <button className="clear-memory" onClick={clearMemory}>清除所有本地记忆</button>
       <div className="actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>保存设置</button></div>
     </section></div>}

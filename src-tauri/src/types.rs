@@ -249,6 +249,7 @@ pub struct AppUsageAggregate {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct UserSettings {
     pub cpu_threshold: f32,
     pub memory_threshold: f32,
@@ -256,6 +257,7 @@ pub struct UserSettings {
     pub low_power_mode: bool,
     pub notifications_enabled: bool,
     pub retention_days: u32,
+    pub auto_start: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -284,6 +286,7 @@ impl Default for UserSettings {
             low_power_mode: false,
             notifications_enabled: true,
             retention_days: 7,
+            auto_start: false,
         }
     }
 }
