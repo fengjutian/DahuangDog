@@ -22,6 +22,10 @@ export interface SystemSnapshot {
   memoryPercent: number;
   usedMemoryBytes: number;
   totalMemoryBytes: number;
+  diskReadBps: number;
+  diskWriteBps: number;
+  networkReceiveBps: number;
+  networkSendBps: number;
   processes: ProcessSample[];
 }
 
@@ -50,6 +54,14 @@ export interface CurrentStatus {
   snapshot: SystemSnapshot | null;
   findings: Finding[];
   timeline: TimelineEvent[];
+  verification: VerificationStatus | null;
+}
+
+export interface VerificationStatus {
+  targetName: string;
+  status: "observing" | "improved" | "noImprovement";
+  message: string;
+  startedAt: number;
 }
 
 export interface ActionPreview {

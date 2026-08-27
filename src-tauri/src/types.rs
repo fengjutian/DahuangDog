@@ -19,6 +19,10 @@ pub struct SystemSnapshot {
     pub memory_percent: f32,
     pub used_memory_bytes: u64,
     pub total_memory_bytes: u64,
+    pub disk_read_bps: u64,
+    pub disk_write_bps: u64,
+    pub network_receive_bps: u64,
+    pub network_send_bps: u64,
     pub processes: Vec<ProcessSample>,
 }
 
@@ -53,6 +57,16 @@ pub struct CurrentStatus {
     pub snapshot: Option<SystemSnapshot>,
     pub findings: Vec<Finding>,
     pub timeline: Vec<TimelineEvent>,
+    pub verification: Option<VerificationStatus>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerificationStatus {
+    pub target_name: String,
+    pub status: String,
+    pub message: String,
+    pub started_at: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]

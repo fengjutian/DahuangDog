@@ -1,4 +1,5 @@
 mod monitor;
+mod storage;
 mod types;
 
 use monitor::Monitor;

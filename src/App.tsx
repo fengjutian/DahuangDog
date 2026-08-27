@@ -15,6 +15,13 @@ function formatBytes(value: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(value / 1024 / 1024).toFixed(0)} MB`;
 }
 
+function formatRate(value: number): string {
+  if (!Number.isFinite(value)) return "--";
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KB/s`;
+  return `${value.toFixed(0)} B/s`;
+}
+
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
   return <div className={`metric ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong></div>;
 }
@@ -72,8 +79,23 @@ export default function App() {
       <Metric label="CPU" value={snap ? `${snap.cpuPercent.toFixed(0)}%` : "--"} tone={snap && snap.cpuPercent >= 90 ? "warn" : undefined} />
       <Metric label="内存" value={snap ? `${snap.memoryPercent.toFixed(0)}%` : "--"} tone={snap && snap.memoryPercent >= 90 ? "warn" : undefined} />
       <Metric label="已用内存" value={snap ? formatBytes(snap.usedMemoryBytes) : "--"} />
+      <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} />
+      <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} />
       <Metric label="发现" value={`${status.findings.length} 个`} tone={status.findings.length ? "warn" : undefined} />
     </section>
+
+    {status.verification && <section className={`verification ${status.verification.status}`}>
+      <span>{status.verification.status === "observing" ? "👀" : status.verification.status === "improved" ? "✅" : "🤔"}</span>
+      <div><b>{status.verification.targetName}</b><p>{status.verification.message}</p></div>
+    </section>}
+
+    {status.findings.length > 0 && <section className="findings">
+      {status.findings.map(finding => <article key={finding.id} className="finding-card">
+        <div><span className="risk">{finding.severity === "critical" ? "严重" : "需要注意"}</span><h3>{finding.title}</h3><p>{finding.message}</p></div>
+        <ul>{finding.evidence.map(item => <li key={item}>{item}</li>)}</ul>
+        {finding.process && <button onClick={() => inspect(finding.process!)}>查看并处理 {finding.process.name}</button>}
+      </article>)}
+    </section>}
 
     <div className="columns">
       <section className="card"><div className="section-title"><h3>正在盯着</h3><span>资源占用靠前</span></div>
