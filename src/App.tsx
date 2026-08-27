@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
-import type { ActionPreview, AppUsageRecord, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
+import { clearLocalMemory, confirmAction, diagnosePerformance, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistory, getSecurityReport, getSettings, openProcessLocation, preparePriority, prepareTerminate, saveSettings } from "./api";
+import type { ActionPreview, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, ProcessSample, SecurityReport, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -52,6 +52,12 @@ function TrendChart({ history }: { history: HistorySummary }) {
       <path className="cpu-line" d={linePath(history.points, "cpuPercent")} />
     </svg>
     <div className="legend"><span className="cpu-dot">CPU · 基线 {history.baselineCpuPercent.toFixed(0)}%</span><span className="memory-dot">内存 · 基线 {history.baselineMemoryPercent.toFixed(0)}%</span></div>
+    <div className="monitor-insights">
+      <div><span>CPU 峰值</span><b>{history.peakCpuPercent.toFixed(0)}%</b></div>
+      <div><span>内存峰值</span><b>{history.peakMemoryPercent.toFixed(0)}%</b></div>
+      <div><span>平均磁盘</span><b>{formatRate(history.averageDiskBps)}</b></div>
+      <div><span>平均网络</span><b>{formatRate(history.averageNetworkBps)}</b></div>
+    </div>
   </section>;
 }
 
@@ -68,6 +74,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
   const [usage, setUsage] = useState<AppUsageRecord[] | null>(null);
+  const [usageSummary, setUsageSummary] = useState<AppUsageSummary | null>(null);
+  const [usageQuery, setUsageQuery] = useState("");
+  const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -154,13 +163,19 @@ export default function App() {
 
   async function showUsage() {
     setBusy(true);
-    try { setUsage(await getAppUsageHistory()); }
+    try {
+      const [records, summary] = await Promise.all([getAppUsageHistory(), getAppUsageSummary(7)]);
+      setUsage(records);
+      setUsageSummary(summary);
+    }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   }
 
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
   const snap = status.snapshot;
+  const visibleUsage = usage?.filter(record => record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
+  const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => setSettingsOpen(true)}>⚙️ 设置</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button><span className="live"><i />{stateLabel[status.dogState]}</span></div></header>
@@ -223,9 +238,16 @@ export default function App() {
     {security && <div className="modal-backdrop" onClick={() => setSecurity(null)}><section className="modal report-modal security-report" onClick={e => e.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">只读安全扫描</span><h3>🛡️ 看门报告</h3></div><button className="modal-close" onClick={() => setSecurity(null)} aria-label="关闭看门报告">×</button></div>
       <div className="report-scroll">
-        <div className="security-summary"><b>{security.summary}</b><span>扫描 {security.scannedPrograms} 个程序 · {security.signedPrograms} 个签名有效 · {security.startupEntries.length} 个启动项</span></div>
+        <div className="security-scoreboard">
+          <div className={`security-score ${security.securityScore < 70 ? "attention" : ""}`}><strong>{security.securityScore}</strong><span>安全分</span></div>
+          <div><b>{security.mediumRiskCount}</b><span>需要确认</span></div>
+          <div><b>{security.lowRiskCount}</b><span>低风险信号</span></div>
+          <div><b>{security.signedPrograms}/{security.scannedPrograms}</b><span>签名有效</span></div>
+        </div>
+        <div className="security-summary"><b>{security.summary}</b><span>扫描于 {new Date(security.scannedAt).toLocaleString("zh-CN")} · {security.startupEntries.length} 个启动项</span></div>
         <p className="security-note">未验证不等于恶意程序。大黄狗只展示客观信号，请结合来源和用途判断。</p>
-        {security.programs.length > 0 && <div className="security-group"><h4>运行中的程序</h4>{security.programs.map(program => <article className="security-item" key={`${program.pid}-${program.path}`}>
+        <div className="report-filters"><button className={securityFilter === "all" ? "active" : ""} onClick={() => setSecurityFilter("all")}>全部</button><button className={securityFilter === "medium" ? "active" : ""} onClick={() => setSecurityFilter("medium")}>需要确认</button><button className={securityFilter === "low" ? "active" : ""} onClick={() => setSecurityFilter("low")}>低风险</button></div>
+        {visiblePrograms.length > 0 && <div className="security-group"><h4>运行中的程序</h4>{visiblePrograms.map(program => <article className="security-item" key={`${program.pid}-${program.path}`}>
           <span className={`risk-pill ${program.riskLevel}`}>{program.riskLevel === "medium" ? "需确认" : "低风险"}</span><div><b>{program.name}</b><code>{program.path}</code><small>{program.reasons.length ? program.reasons.join(" · ") : "未发现额外风险信号"}</small></div><span>{program.signatureStatus === "valid" ? "✓ 签名有效" : "? 签名未验证"}</span>
         </article>)}</div>}
         <div className="security-group"><h4>开机启动项</h4>{security.startupEntries.length ? security.startupEntries.map(entry => <article className="security-item startup" key={`${entry.source}-${entry.name}`}>
@@ -236,13 +258,23 @@ export default function App() {
     {usage && <div className="modal-backdrop" onClick={() => setUsage(null)}><section className="modal report-modal usage-report" onClick={e => e.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">应用生命周期</span><h3>⏱ 使用记录</h3></div><button className="modal-close" onClick={() => setUsage(null)} aria-label="关闭使用记录">×</button></div>
       <p className="security-note">启动与运行时间来自进程生命周期；前台使用时间从大黄狗首次观察后累计。</p>
+      {usageSummary && <>
+        <div className="usage-summary">
+          <div><b>{formatDuration(usageSummary.totalForegroundSeconds)}</b><span>近 7 天前台使用</span></div>
+          <div><b>{formatDuration(usageSummary.totalBackgroundSeconds)}</b><span>后台运行</span></div>
+          <div><b>{usageSummary.applicationCount}</b><span>使用过的应用</span></div>
+          <div><b>{usageSummary.longestUsedApp ?? "暂无"}</b><span>最常使用</span></div>
+        </div>
+        {usageSummary.topApps.length > 0 && <div className="usage-ranking"><h4>前台使用排行</h4>{usageSummary.topApps.slice(0, 5).map((app, index) => <div key={app.name}><span>{index + 1}. {app.name}</span><i><em style={{width: `${Math.max(4, app.foregroundSeconds / Math.max(1, usageSummary.topApps[0].foregroundSeconds) * 100)}%`}} /></i><b>{formatDuration(app.foregroundSeconds)}</b></div>)}</div>}
+      </>}
+      <input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" />
       <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>
-      <div className="usage-list report-scroll">{usage.map(record => <article key={record.sessionId} className="usage-row">
+      <div className="usage-list report-scroll">{visibleUsage.map(record => <article key={record.sessionId} className="usage-row">
         <div><b>{record.name}</b><small>PID {record.rootPid} · 峰值 {record.memberPeak} 个进程</small></div>
         <div><span>{new Date(record.startedAt).toLocaleString("zh-CN")}</span><small>{record.isRunning ? "仍在运行" : record.closedAt ? `关闭于 ${new Date(record.closedAt).toLocaleString("zh-CN")}` : "关闭时间未知"}</small></div>
         <div><b>{formatDuration(record.runtimeSeconds)}</b><small>后台 {formatDuration(record.backgroundSeconds)}</small></div>
         <div><b>{formatDuration(record.foregroundSeconds)}</b><small>{record.isRunning ? "● 活跃会话" : "已结束"}</small></div>
-      </article>)}{!usage.length && <p className="empty">还没有应用使用记录。</p>}</div>
+      </article>)}{!visibleUsage.length && <p className="empty">没有匹配的应用使用记录。</p>}</div>
     </section></div>}
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>
       <span className="risk">进程操作</span><h3>{selected.name}</h3><p>PID {selected.pid} · CPU {selected.cpuPercent.toFixed(1)}% · {formatBytes(selected.memoryBytes)}</p>

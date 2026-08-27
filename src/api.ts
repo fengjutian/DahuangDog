@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, AppUsageRecord, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AppUsageRecord, AppUsageSummary, CurrentStatus, HistorySummary, LocalDiagnosis, SecurityReport, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -69,7 +69,11 @@ export async function getHistory(): Promise<HistorySummary> {
       networkBps: 500_000 + Math.abs(Math.cos(index / 2)) * 3_000_000
     })),
     baselineCpuPercent: 24,
-    baselineMemoryPercent: 51
+    baselineMemoryPercent: 51,
+    peakCpuPercent: 31,
+    peakMemoryPercent: 54,
+    averageDiskBps: 1_800_000,
+    averageNetworkBps: 2_100_000
   };
 }
 
@@ -86,7 +90,7 @@ export async function diagnosePerformance(): Promise<LocalDiagnosis> {
 export async function getSecurityReport(): Promise<SecurityReport> {
   if (!isTauri()) return {
     scannedAt: Date.now(), scannedPrograms: 42, signedPrograms: 38,
-    summary: "发现 1 个值得进一步确认的项目。",
+    summary: "发现 1 个值得进一步确认的项目。", securityScore: 86, mediumRiskCount: 1, lowRiskCount: 0,
     programs: [{ pid: 8842, name: "example.exe", path: "C:\\Users\\demo\\AppData\\Local\\example.exe", signatureStatus: "unverified", riskLevel: "medium", reasons: ["没有可验证的数字签名", "程序位于用户可写目录"] }],
     startupEntries: [{ name: "OneDrive", command: "OneDrive.exe /background", source: "当前用户\\Run", riskLevel: "normal", reasons: [] }]
   };
@@ -112,4 +116,13 @@ export async function getAppUsageHistory(): Promise<AppUsageRecord[]> {
   if (isTauri()) return invoke("get_app_usage_history");
   const now = Date.now();
   return [{ sessionId: "demo", name: "chrome.exe", rootPid: 4242, startedAt: now - 7_200_000, firstSeenAt: now - 3_600_000, lastSeenAt: now, closedAt: null, runtimeSeconds: 7200, foregroundSeconds: 1840, backgroundSeconds: 5360, memberPeak: 8, isRunning: true }];
+}
+
+export async function getAppUsageSummary(periodDays = 7): Promise<AppUsageSummary> {
+  if (isTauri()) return invoke("get_app_usage_summary", { periodDays });
+  return {
+    periodDays, applicationCount: 3, sessionCount: 6, totalRuntimeSeconds: 28800,
+    totalForegroundSeconds: 10800, totalBackgroundSeconds: 18000, longestUsedApp: "chrome.exe",
+    topApps: [{ name: "chrome.exe", sessionCount: 2, runtimeSeconds: 14400, foregroundSeconds: 7200, backgroundSeconds: 7200 }]
+  };
 }

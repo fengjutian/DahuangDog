@@ -88,6 +88,10 @@ export interface HistorySummary {
   points: MetricPoint[];
   baselineCpuPercent: number;
   baselineMemoryPercent: number;
+  peakCpuPercent: number;
+  peakMemoryPercent: number;
+  averageDiskBps: number;
+  averageNetworkBps: number;
 }
 
 export interface LocalDiagnosis {
@@ -121,6 +125,28 @@ export interface SecurityReport {
   programs: ProgramRisk[];
   startupEntries: StartupEntry[];
   summary: string;
+  securityScore: number;
+  mediumRiskCount: number;
+  lowRiskCount: number;
+}
+
+export interface AppUsageAggregate {
+  name: string;
+  sessionCount: number;
+  runtimeSeconds: number;
+  foregroundSeconds: number;
+  backgroundSeconds: number;
+}
+
+export interface AppUsageSummary {
+  periodDays: number;
+  applicationCount: number;
+  sessionCount: number;
+  totalRuntimeSeconds: number;
+  totalForegroundSeconds: number;
+  totalBackgroundSeconds: number;
+  longestUsedApp: string | null;
+  topApps: AppUsageAggregate[];
 }
 
 export interface ActionPreview {

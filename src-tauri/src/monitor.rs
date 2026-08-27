@@ -113,6 +113,29 @@ fn foreground_process_id() -> Option<u32> {
     }
 }
 
+fn process_thread_counts() -> HashMap<u32, usize> {
+    use std::mem::size_of;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD},
+    };
+    let mut counts = HashMap::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if snapshot == INVALID_HANDLE_VALUE { return counts; }
+        let mut entry: THREADENTRY32 = std::mem::zeroed();
+        entry.dwSize = size_of::<THREADENTRY32>() as u32;
+        if Thread32First(snapshot, &mut entry) != 0 {
+            loop {
+                *counts.entry(entry.th32OwnerProcessID).or_insert(0) += 1;
+                if Thread32Next(snapshot, &mut entry) == 0 { break; }
+            }
+        }
+        CloseHandle(snapshot);
+    }
+    counts
+}
+
 #[derive(Default)]
 struct RollingBaseline {
     values: VecDeque<f64>,
@@ -248,6 +271,7 @@ impl Monitor {
         } else {
             used as f32 / total as f32 * 100.0
         };
+        let thread_counts = process_thread_counts();
         let mut processes: Vec<_> = self
             .system
             .processes()
@@ -262,6 +286,7 @@ impl Monitor {
                     cpu_percent: process.cpu_usage(),
                     memory_bytes: process.memory(),
                     is_critical: is_critical(&name),
+                    thread_count: thread_counts.get(&pid.as_u32()).copied().unwrap_or(0),
                 }
             })
             .collect();
@@ -313,6 +338,9 @@ impl Monitor {
             disk_write_bps: disk_write_bytes / 2,
             network_receive_bps: network_receive_bytes / 2,
             network_send_bps: network_send_bytes / 2,
+            disk_total_bytes: self.disks.list().iter().map(|disk| disk.total_space()).sum(),
+            disk_available_bytes: self.disks.list().iter().map(|disk| disk.available_space()).sum(),
+            uptime_seconds: System::uptime(),
             processes,
             applications,
         };

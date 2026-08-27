@@ -1,5 +1,5 @@
 use crate::types::{
-    AppUsageAggregate, AppUsageRecord, AppUsageSummary, HistorySummary, MetricPoint,
+    AppUsageAggregate, AppUsageRecord, AppUsageSummary, DailyUsage, HistorySummary, MetricPoint,
     SystemSnapshot, TimelineEvent, UserSettings,
 };
 use rusqlite::{params, Connection};
@@ -328,6 +328,14 @@ impl Storage {
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
+        let mut daily_statement = self.connection.prepare(
+            "SELECT strftime('%Y-%m-%d', last_seen_at / 1000, 'unixepoch', 'localtime'),
+                    SUM(foreground_seconds), COUNT(*)
+             FROM app_sessions WHERE last_seen_at >= ?1 GROUP BY 1 ORDER BY 1",
+        )?;
+        let daily_usage = daily_statement.query_map([since], |row| Ok(DailyUsage {
+            date: row.get(0)?, foreground_seconds: row.get(1)?, launch_count: row.get(2)?,
+        }))?.collect::<rusqlite::Result<_>>()?;
         Ok(AppUsageSummary {
             period_days,
             application_count: top_apps.len(),
@@ -337,6 +345,7 @@ impl Storage {
             total_background_seconds: top_apps.iter().map(|app| app.background_seconds).sum(),
             longest_used_app: top_apps.first().map(|app| app.name.clone()),
             top_apps: top_apps.into_iter().take(8).collect(),
+            daily_usage,
         })
     }
 }

@@ -10,6 +10,7 @@ pub struct ProcessSample {
     pub cpu_percent: f32,
     pub memory_bytes: u64,
     pub is_critical: bool,
+    pub thread_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -36,6 +37,9 @@ pub struct SystemSnapshot {
     pub disk_write_bps: u64,
     pub network_receive_bps: u64,
     pub network_send_bps: u64,
+    pub disk_total_bytes: u64,
+    pub disk_available_bytes: u64,
+    pub uptime_seconds: u64,
     pub processes: Vec<ProcessSample>,
     pub applications: Vec<ApplicationGroup>,
 }
@@ -147,7 +151,29 @@ pub struct SecurityReport {
     pub security_score: u8,
     pub medium_risk_count: usize,
     pub low_risk_count: usize,
+    pub network_connections: Vec<NetworkConnection>,
+    pub scheduled_tasks: Vec<ScheduledTask>,
+    pub windows_services: Vec<WindowsService>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkConnection {
+    pub protocol: String,
+    pub local_address: String,
+    pub remote_address: String,
+    pub state: String,
+    pub pid: u32,
+    pub process_name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledTask { pub name: String, pub path: String }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsService { pub name: String, pub start_mode: String, pub image_path: String }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,7 +186,12 @@ pub struct AppUsageSummary {
     pub total_background_seconds: u64,
     pub longest_used_app: Option<String>,
     pub top_apps: Vec<AppUsageAggregate>,
+    pub daily_usage: Vec<DailyUsage>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyUsage { pub date: String, pub foreground_seconds: u64, pub launch_count: usize }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
