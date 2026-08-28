@@ -65,6 +65,19 @@ function formatDuration(seconds: number): string {
   return `${hours} 小时 ${minutes} 分钟`;
 }
 
+const fullDateTimeFormatter = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const clockFormatter = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const compactDateTimeFormatter = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+function formatFullDateTime(timestamp: number): string { return fullDateTimeFormatter.format(new Date(timestamp)); }
+function formatClock(timestamp: number): string { return clockFormatter.format(new Date(timestamp)); }
+
+const TimelineCard = memo(function TimelineCard({ items, onOpen }: { items: CurrentStatus["timeline"]; onOpen: () => void }) {
+  return <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><div className="timeline-title-actions"><span>最近事件</span>{items.length > 8 && <button onClick={onOpen}>查看全部 {items.length} 条</button>}</div></div>
+    <ol className="timeline">{items.slice(0, 8).map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{formatClock(item.occurredAt)}</time><span>{item.message}</span></li>)}</ol>
+  </section>;
+});
+
 const knownApplications: Record<string, { productName: string; description: string }> = {
   "msedge.exe": { productName: "Microsoft Edge", description: "微软的 Chromium 浏览器，用于网页浏览、扩展和 Web 应用。多个进程分别负责标签页、GPU、网络与扩展。" },
   "msedgewebview2.exe": { productName: "Microsoft Edge WebView2 Runtime", description: "为 Windows 桌面应用提供网页界面渲染能力，通常由其他应用在后台启动。" },
@@ -163,8 +176,8 @@ function formatApplicationAxisValue(key: ApplicationMetricKey, value: number): s
 function formatApplicationAxisTime(timestamp: number, rangeMinutes: number): string {
   const date = new Date(timestamp);
   return rangeMinutes <= 60
-    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    ? clockFormatter.format(date)
+    : compactDateTimeFormatter.format(date);
 }
 
 function ApplicationHistoryChart({ history, metric, label }: { history: ApplicationHistory; metric: ApplicationMetricKey; label: string }) {
@@ -492,8 +505,10 @@ export default function App() {
   const appDetailsPresentation = appDetails ? applicationPresentation(appDetails) : null;
   const cleanupCategories = useMemo(() => cleanup ? [...new Set(cleanup.candidates.map(item => item.category))] : [], [cleanup]);
   const visibleCleanup = useMemo(() => cleanup?.candidates.filter(item => cleanupFilter === "all" || item.category === cleanupFilter) ?? [], [cleanup, cleanupFilter]);
+  const reversedHistoryPoints = useMemo(() => history ? [...history.points].reverse() : [], [history]);
   const openHistory = useCallback((metric: HistoryMetricKey) => setSelectedHistoryMetric(metric), []);
   const openStorage = useCallback(() => setStorageOpen(true), []);
+  const openTimeline = useCallback(() => setTimelineOpen(true), []);
 
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
 
@@ -539,23 +554,21 @@ export default function App() {
         </div>})}{!visibleApplications.length && <p className="empty">{normalizedProcessQuery ? "没有找到匹配的应用或进程。" : "还没有采集到应用数据。"}</p>}</div>
       </section>
 
-      <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><div className="timeline-title-actions"><span>最近事件</span>{status.timeline.length > 8 && <button onClick={() => setTimelineOpen(true)}>查看全部 {status.timeline.length} 条</button>}</div></div>
-        <ol className="timeline">{status.timeline.slice(0, 8).map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{item.message}</span></li>)}</ol>
-      </section>
+      <TimelineCard items={status.timeline} onOpen={openTimeline} />
     </div>
 
     {message && <div className="toast" onClick={() => setMessage("")}>{message}</div>}
     {selectedHistoryMetric && <div className="modal-backdrop" onClick={() => setSelectedHistoryMetric(null)}><section className="modal report-modal metric-history-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">每个采样时间点</span><h3>{historyMetricLabel[selectedHistoryMetric]}历史明细</h3></div><button className="modal-close" onClick={() => setSelectedHistoryMetric(null)} aria-label="关闭历史明细">×</button></div>
       <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={historyRange === value ? "active" : ""} onClick={() => setHistoryRange(Number(value))}>{label}</button>)}</div>
-      <div className="report-scroll metric-history-scroll">{historyError ? <p className="history-error">历史数据读取失败：{historyError}</p> : history?.points.length ? <div className="metric-history-table" role="table">
+      <div className="metric-history-scroll">{historyError ? <p className="history-error">历史数据读取失败：{historyError}</p> : history?.points.length ? <div className="metric-history-table" role="table">
         <div className="metric-history-row metric-history-head" role="row"><b>采样时间</b>{(["cpuPercent","memoryPercent","diskBps","networkBps"] as HistoryMetricKey[]).map(key => <b key={key} className={selectedHistoryMetric === key ? "selected" : ""}>{historyMetricLabel[key]}</b>)}</div>
-        {[...history.points].reverse().map(point => <div className="metric-history-row" role="row" key={point.capturedAt}><time>{new Date(point.capturedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span className={selectedHistoryMetric === "cpuPercent" ? "selected" : ""}>{point.cpuPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "memoryPercent" ? "selected" : ""}>{point.memoryPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "diskBps" ? "selected" : ""}>{formatRate(point.diskBps)}</span><span className={selectedHistoryMetric === "networkBps" ? "selected" : ""}>{formatRate(point.networkBps)}</span></div>)}
+        <VirtualList items={reversedHistoryPoints} itemHeight={40} className="metric-history-virtual" keyFor={point => String(point.capturedAt)} renderItem={point => <div className="metric-history-row" role="row"><time>{formatFullDateTime(point.capturedAt)}</time><span className={selectedHistoryMetric === "cpuPercent" ? "selected" : ""}>{point.cpuPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "memoryPercent" ? "selected" : ""}>{point.memoryPercent.toFixed(1)}%</span><span className={selectedHistoryMetric === "diskBps" ? "selected" : ""}>{formatRate(point.diskBps)}</span><span className={selectedHistoryMetric === "networkBps" ? "selected" : ""}>{formatRate(point.networkBps)}</span></div>} />
       </div> : <p className="empty">当前时间范围还没有历史采样数据。</p>}</div>
     </section></div>}
     {timelineOpen && <div className="modal-backdrop" onClick={() => setTimelineOpen(false)}><section className="modal report-modal timeline-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">本地保存的最近事件</span><h3>🐾 全部巡逻记录</h3></div><button className="modal-close" onClick={() => setTimelineOpen(false)} aria-label="关闭巡逻记录">×</button></div>
-      <div className="report-scroll"><ol className="timeline timeline-full">{status.timeline.map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>)}</ol>{!status.timeline.length && <p className="empty">还没有巡逻记录。</p>}</div>
+      {status.timeline.length ? <VirtualList items={status.timeline} itemHeight={74} className="timeline timeline-full" keyFor={item => item.id} renderItem={item => <li className={`timeline-${item.kind}`}><time>{formatFullDateTime(item.occurredAt)}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>} /> : <p className="empty">还没有巡逻记录。</p>}
     </section></div>}
     {appHistory && <div className="modal-backdrop" onClick={closeApplicationHistory}><section className="modal report-modal app-history-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={closeApplicationHistory} aria-label={appHistoryReturnApp == null ? "关闭应用历史" : "返回应用详情"} title={appHistoryReturnApp == null ? "关闭" : "返回应用详情"}>{appHistoryReturnApp == null ? "×" : "←"}</button></div>

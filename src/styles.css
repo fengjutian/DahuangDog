@@ -87,6 +87,11 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 @keyframes settings-tab-in { from { opacity: .35; transform: translateY(3px); } }
 
 .virtual-list { position: relative; min-height: 0; overflow: auto; contain: strict; overscroll-behavior: contain; }.virtual-list-spacer { position: relative; width: 100%; }.virtual-list-item { position: absolute; top: 0; right: 0; left: 0; overflow: hidden; contain: layout paint; }.virtual-list-item > * { box-sizing: border-box; height: 100%; margin: 0; }.cleanup-list.virtual-list, .usage-list.virtual-list { flex: 1; height: min(430px, 55vh) !important; }
+.metric-history-virtual { min-width: 680px; height: min(470px, 58vh) !important; }.metric-history-virtual .metric-history-row { height: 40px; }.timeline-full.virtual-list { flex: 1; height: min(560px, 68vh) !important; }.timeline-full .virtual-list-item { overflow: visible; }
+
+@media (prefers-reduced-transparency: reduce) {
+  .modal-backdrop { background: #2d281fcc; backdrop-filter: none; }
+}
 
 @media (max-width: 1000px) {
   .shell { padding: 24px 24px 58px; }
