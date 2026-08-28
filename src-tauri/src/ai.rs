@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 const CREDENTIAL_TARGET: &str = "DahuangDog/MiniMaxApiKey";
-const ENDPOINT: &str = "https://api.minimax.io/v1/chat/completions";
+const ENDPOINT: &str = "https://api.minimaxi.com/v1/chat/completions";
 const ALLOWED_MODELS: [&str; 4] = ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"];
 
 fn validate_model(model: &str) -> Result<(), String> {
@@ -108,7 +108,7 @@ pub fn test_connection(model: &str, api_key: Option<String>) -> Result<String, S
         let message = payload.pointer("/base_resp/status_msg").and_then(Value::as_str)
             .or_else(|| payload.pointer("/error/message").and_then(Value::as_str)).unwrap_or("请求失败");
         if status.as_u16() == 401 && (message.contains("Authorization") || message.contains("1004")) {
-            return Err("MiniMax 未识别 API Key。请只粘贴密钥本身（不要包含 Bearer 或引号），并确认它来自 platform.minimax.io 的 API Keys 页面。".into());
+            return Err("MiniMax 未识别 API Key。请只粘贴密钥本身（不要包含 Bearer 或引号），并确认它来自国内开放平台 platform.minimaxi.com 的接口密钥页面。".into());
         }
         return Err(format!("MiniMax 请求失败（HTTP {status}）：{message}"));
     }
