@@ -206,6 +206,7 @@ export default function App() {
   const [patterns, setPatterns] = useState<PeriodicPattern[] | null>(null);
   const [cleanup, setCleanup] = useState<CleanupReport | null>(null);
   const [cleanupSelection, setCleanupSelection] = useState<string[]>([]);
+  const [cleanupFilter, setCleanupFilter] = useState("all");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -289,7 +290,7 @@ export default function App() {
 
   async function showCleanup() {
     setBusy(true);
-    try { const report = await scanCleanup(); setCleanup(report); setCleanupSelection(report.candidates.filter(item => item.cleanable).map(item => item.path)); }
+    try { const report = await scanCleanup(); setCleanup(report); setCleanupFilter("all"); setCleanupSelection(report.candidates.filter(item => item.cleanable).slice(0, 1_000).map(item => item.path)); }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   }
@@ -407,6 +408,8 @@ export default function App() {
   }).slice(0, 8) ?? [];
   const appDetails = selectedApp == null ? null : snap?.applications.find(application => application.rootPid === selectedApp) ?? null;
   const appDetailsPresentation = appDetails ? applicationPresentation(appDetails) : null;
+  const cleanupCategories = cleanup ? [...new Set(cleanup.candidates.map(item => item.category))] : [];
+  const visibleCleanup = cleanup?.candidates.filter(item => cleanupFilter === "all" || item.category === cleanupFilter) ?? [];
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setStorageOpen(true)}>💾 存储分析</button><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
@@ -525,8 +528,9 @@ export default function App() {
     </section></div>}
     {cleanup && <div className="modal-backdrop" onClick={() => setCleanup(null)}><section className="modal report-modal cleanup-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">只读扫描 · 删除前再次确认</span><h3>🧹 磁盘清理助手</h3></div><button className="modal-close" onClick={() => setCleanup(null)} aria-label="关闭清理助手">×</button></div>
-      <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>下载目录大文件仅供查看，不能在这里删除。</span><button disabled={!cleanupSelection.length} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.length} 项</button></div>
-      <div className="report-scroll cleanup-list">{cleanup.candidates.map(item => <label key={item.path}><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.includes(item.path)} onChange={event => setCleanupSelection(event.target.checked ? [...cleanupSelection,item.path] : cleanupSelection.filter(path => path !== item.path))}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可清理" : "只读"}</span></label>)}{!cleanup.candidates.length && <p className="empty">没有发现符合条件的临时文件或大文件。</p>}</div>
+      <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>选中的缓存将移入 Windows 回收站；系统缓存、回收站容量和重复文件只做分析。</span><button disabled={!cleanupSelection.length} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.length} 项</button></div>
+      <div className="cleanup-filters" aria-label="清理分类"><button className={cleanupFilter === "all" ? "active" : ""} onClick={() => setCleanupFilter("all")}>全部 {cleanup.candidates.length}</button>{cleanupCategories.map(category => <button key={category} className={cleanupFilter === category ? "active" : ""} onClick={() => setCleanupFilter(category)}>{category}</button>)}</div>
+      <div className="report-scroll cleanup-list">{visibleCleanup.map(item => <label key={`${item.category}-${item.path}`}><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.includes(item.path)} onChange={event => setCleanupSelection(event.target.checked ? [...cleanupSelection,item.path] : cleanupSelection.filter(path => path !== item.path))}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可回收" : "只读分析"}</span></label>)}{!visibleCleanup.length && <p className="empty">当前分类没有发现可展示的项目。</p>}</div>
     </section></div>}
     {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>

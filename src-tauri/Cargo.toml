@@ -31,7 +31,8 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Power",
   "Win32_System_Time",
   "Win32_Storage_FileSystem",
-  "Win32_UI_WindowsAndMessaging"
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell"
 ] }
 
 [dev-dependencies]
