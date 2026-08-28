@@ -183,6 +183,7 @@ export default function App() {
   const [selected, setSelected] = useState<ProcessSample | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"patrol" | "system" | "ai" | "data">("patrol");
   const [minimaxKey, setMinimaxKey] = useState("");
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiTesting, setAiTesting] = useState(false);
@@ -665,8 +666,11 @@ export default function App() {
         <div><span className="risk">设置中心</span><h3>大黄狗设置</h3><p>调整巡逻频率、后台能力和 AI 诊断。</p></div>
         <button className="modal-close" onClick={closeSettings} aria-label="关闭设置">×</button>
       </header>
+      <nav className="settings-tabs" role="tablist" aria-label="设置分类">
+        {([['patrol','巡逻与记录'],['system','后台能力'],['ai','MiniMax AI'],['data','数据管理']] as const).map(([key,label]) => <button key={key} role="tab" aria-selected={settingsTab === key} className={settingsTab === key ? "active" : ""} onClick={() => setSettingsTab(key)}>{label}</button>)}
+      </nav>
       <div className="settings-content">
-        <section className="settings-section">
+        {settingsTab === "patrol" && <section className="settings-section settings-tab-panel">
           <div className="settings-section-title"><div><h4>巡逻与记录</h4><p>控制异常阈值、采样速度和历史数据保留周期。</p></div><span>基础</span></div>
           <div className="settings-grid">
             <label className="setting-field setting-range">CPU 告警阈值 <output>{settings.cpuThreshold}%</output><input type="range" min="70" max="99" value={settings.cpuThreshold} onChange={e => setSettings({...settings, cpuThreshold: Number(e.target.value)})} /></label>
@@ -674,8 +678,8 @@ export default function App() {
             <label className="setting-field">普通采样间隔 <select value={settings.samplingSeconds} onChange={e => setSettings({...settings, samplingSeconds: Number(e.target.value)})}><option value="2">2 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
             <label className="setting-field">历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
           </div>
-        </section>
-        <section className="settings-section">
+        </section>}
+        {settingsTab === "system" && <section className="settings-section settings-tab-panel">
           <div className="settings-section-title"><div><h4>后台能力</h4><p>选择大黄狗在 Windows 中可以执行的巡逻任务。</p></div><span>系统</span></div>
           <div className="settings-toggles">
             <label className="check"><input type="checkbox" checked={settings.lowPowerMode} onChange={e => setSettings({...settings, lowPowerMode: e.target.checked})} /><span><b>低功耗模式</b><small>固定每 15 秒巡逻，降低后台资源占用。</small></span></label>
@@ -684,8 +688,8 @@ export default function App() {
             <label className="check"><input type="checkbox" checked={settings.applicationNetworkMonitoring} onChange={e => setSettings({...settings, applicationNetworkMonitoring: e.target.checked})} /><span><b>应用级网络流量</b><small>需要管理员权限启动 ETW 采集会话。</small></span></label>
           </div>
           <p className="availability">网络监控只记录每个进程的收发字节数，不采集网络内容；权限不足时数据会保持为空。</p>
-        </section>
-        <section className="settings-section ai-settings">
+        </section>}
+        {settingsTab === "ai" && <section className="settings-section ai-settings settings-tab-panel">
           <div className="settings-section-title"><div><h4>MiniMax AI 诊断</h4><p>用当前资源指标和异常摘要分析电脑卡顿原因。</p></div><span className={aiConfigured ? "configured" : ""}>{aiConfigured ? "已配置" : "未配置"}</span></div>
           <label className="check ai-toggle"><input type="checkbox" checked={settings.minimaxEnabled} onChange={e => setSettings({...settings, minimaxEnabled: e.target.checked})} /><span><b>启用 MiniMax 分析</b><small>用于“大黄，电脑为什么卡？”诊断。</small></span></label>
           <div className="settings-grid ai-fields">
@@ -695,8 +699,8 @@ export default function App() {
           <div className="ai-test-row"><button disabled={aiTesting} onClick={() => void testMinimax()}>{aiTesting ? "正在测试…" : "测试连接"}</button>{aiTestResult && <span className={aiTestResult.ok ? "success" : "failure"}>{aiTestResult.ok ? "✓" : "×"} {aiTestResult.message}</span>}</div>
           <p className="ai-privacy">🔒 密钥保存在 Windows 凭据管理器。AI 不会接收文件路径、PID 或文件内容。</p>
           {aiConfigured && <button className="remove-ai-key" onClick={() => void removeMinimaxKey()}>删除已保存的 API Key</button>}
-        </section>
-        <section className="settings-danger"><div><b>清除本地记忆</b><span>删除历史快照、巡逻记录和动作审计，且无法撤销。</span></div><button onClick={clearMemory}>清除数据</button></section>
+        </section>}
+        {settingsTab === "data" && <div className="settings-tab-panel"><section className="settings-section data-settings-intro"><div className="settings-section-title"><div><h4>本地数据管理</h4><p>管理大黄狗保存在此电脑上的历史数据。</p></div><span>本机</span></div><p className="availability">历史快照、巡逻记录和动作审计仅保存在本机。清除后无法恢复。</p></section><section className="settings-danger"><div><b>清除本地记忆</b><span>删除历史快照、巡逻记录和动作审计，且无法撤销。</span></div><button onClick={clearMemory}>清除数据</button></section></div>}
       </div>
       <footer className="settings-footer"><span>更改只会在点击保存后生效</span><div className="actions"><button className="secondary" onClick={closeSettings}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>{busy ? "正在保存…" : "保存设置"}</button></div></footer>
     </section></div>}
