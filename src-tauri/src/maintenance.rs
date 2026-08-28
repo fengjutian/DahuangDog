@@ -23,9 +23,19 @@ fn visit_files(root: &Path, category: &str, cleanable: bool, result: &mut Vec<Cl
     }
 }
 
+fn cleanup_roots() -> Vec<(PathBuf, &'static str)> {
+    let mut roots = vec![(std::env::temp_dir(), "临时文件")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        roots.push((local.join(r"Microsoft\Windows\INetCache"), "Windows 网络缓存"));
+        roots.push((local.join(r"Microsoft\Edge\User Data\Default\Cache"), "Edge 缓存"));
+        roots.push((local.join(r"Google\Chrome\User Data\Default\Cache"), "Chrome 缓存"));
+    }
+    roots
+}
+
 pub fn scan_cleanup() -> CleanupReport {
     let mut candidates = Vec::new();
-    visit_files(&std::env::temp_dir(), "临时文件", true, &mut candidates);
+    for (root, category) in cleanup_roots() { visit_files(&root, category, true, &mut candidates); }
     if let Some(profile) = std::env::var_os("USERPROFILE") { visit_files(&PathBuf::from(profile).join("Downloads"), "下载目录大文件（只读）", false, &mut candidates); }
     candidates.sort_by_key(|item| std::cmp::Reverse(item.size_bytes));
     let reclaimable_bytes = candidates.iter().filter(|item| item.cleanable).map(|item| item.size_bytes).sum();
@@ -38,11 +48,12 @@ pub struct MaintenanceManager { pending: HashMap<String, (u64, PendingMaintenanc
 impl MaintenanceManager {
     pub fn new() -> Self { Self { pending: HashMap::new() } }
     pub fn prepare_cleanup(&mut self, paths: Vec<String>) -> Result<MaintenancePreview, String> {
-        let temp = fs::canonicalize(std::env::temp_dir()).map_err(|e| format!("无法定位临时目录：{e}"))?;
+        let allowed: Vec<PathBuf> = cleanup_roots().into_iter().filter_map(|(root, _)| fs::canonicalize(root).ok()).collect();
+        if allowed.is_empty() { return Err("无法定位可清理目录".into()); }
         let mut valid = Vec::new(); let mut total = 0_u64;
         for value in paths.into_iter().take(1_000) {
             let path = fs::canonicalize(&value).map_err(|_| format!("文件已不存在：{value}"))?;
-            if !path.starts_with(&temp) || !path.is_file() { return Err("安全策略只允许清理临时目录中的普通文件".into()); }
+            if !allowed.iter().any(|root| path.starts_with(root)) || !path.is_file() { return Err("安全策略只允许清理已扫描缓存目录中的普通文件".into()); }
             total = total.saturating_add(path.metadata().map(|m| m.len()).unwrap_or(0)); valid.push(path);
         }
         if valid.is_empty() { return Err("没有选择可清理文件".into()); }
