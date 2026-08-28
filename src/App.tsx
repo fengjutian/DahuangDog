@@ -366,10 +366,15 @@ export default function App() {
         setMinimaxKey("");
       }
       if (settings.minimaxEnabled && !configured) throw new Error("启用 MiniMax 前请先输入 API Key");
-      setSettings(await saveSettings(settings)); setMessage("巡逻设置已经保存。" ); setSettingsOpen(false);
+      setSettings(await saveSettings(settings)); setMessage("巡逻设置已经保存。" ); closeSettings();
     }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
+  }
+
+  function closeSettings() {
+    setSettingsOpen(false);
+    setMinimaxKey("");
   }
 
   async function removeMinimaxKey() {
@@ -641,27 +646,44 @@ export default function App() {
       </div>
     </nav>
 
-    {settingsOpen && settings && <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}><section className="modal settings-modal" onClick={e => e.stopPropagation()}>
-      <span className="risk">设置中心</span><h3>巡逻方式</h3>
-      <label>CPU 告警阈值 <output>{settings.cpuThreshold}%</output><input type="range" min="70" max="99" value={settings.cpuThreshold} onChange={e => setSettings({...settings, cpuThreshold: Number(e.target.value)})} /></label>
-      <label>内存告警阈值 <output>{settings.memoryThreshold}%</output><input type="range" min="70" max="99" value={settings.memoryThreshold} onChange={e => setSettings({...settings, memoryThreshold: Number(e.target.value)})} /></label>
-      <label>普通采样间隔 <select value={settings.samplingSeconds} onChange={e => setSettings({...settings, samplingSeconds: Number(e.target.value)})}><option value="2">2 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
-      <label>历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
-      <label className="check"><input type="checkbox" checked={settings.lowPowerMode} onChange={e => setSettings({...settings, lowPowerMode: e.target.checked})} />低功耗模式（固定每 15 秒巡逻）</label>
-      <label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={e => setSettings({...settings, notificationsEnabled: e.target.checked})} />Windows 异常通知</label>
-      <label className="check"><input type="checkbox" checked={settings.autoStart} onChange={e => setSettings({...settings, autoStart: e.target.checked})} />登录 Windows 后自动在托盘巡逻</label>
-      <label className="check"><input type="checkbox" checked={settings.applicationNetworkMonitoring} onChange={e => setSettings({...settings, applicationNetworkMonitoring: e.target.checked})} />应用级网络流量（需要管理员权限启动 ETW）</label>
-      <p className="availability">启用后只记录每个进程的收发字节数，不采集网络内容。权限不足时会保持数据为空。</p>
-      <section className="ai-settings">
-        <div><h4>MiniMax AI 诊断</h4><span className={aiConfigured ? "configured" : ""}>{aiConfigured ? "API Key 已安全保存" : "尚未配置 API Key"}</span></div>
-        <label className="check"><input type="checkbox" checked={settings.minimaxEnabled} onChange={e => setSettings({...settings, minimaxEnabled: e.target.checked})} />使用 MiniMax 分析“电脑为什么卡”</label>
-        <label>模型 <select value={settings.minimaxModel} onChange={e => setSettings({...settings, minimaxModel: e.target.value})}><option value="MiniMax-M2.7">MiniMax-M2.7</option><option value="MiniMax-M2.7-highspeed">MiniMax-M2.7 高速</option><option value="MiniMax-M2.5">MiniMax-M2.5</option><option value="MiniMax-M2.5-highspeed">MiniMax-M2.5 高速</option></select></label>
-        <label>API Key <input type="password" value={minimaxKey} onChange={e => setMinimaxKey(e.target.value)} autoComplete="off" placeholder={aiConfigured ? "输入新 Key 可替换现有凭据" : "粘贴 MiniMax API Key"} /></label>
-        <p>密钥保存在 Windows 凭据管理器。AI 只接收资源指标、应用名称和异常摘要，不会接收文件路径、PID 或文件内容。</p>
-        {aiConfigured && <button className="remove-ai-key" onClick={() => void removeMinimaxKey()}>删除已保存的 API Key</button>}
-      </section>
-      <button className="clear-memory" onClick={clearMemory}>清除所有本地记忆</button>
-      <div className="actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>保存设置</button></div>
+    {settingsOpen && settings && <div className="modal-backdrop" onClick={closeSettings}><section className="modal settings-modal" onClick={e => e.stopPropagation()}>
+      <header className="settings-header">
+        <div><span className="risk">设置中心</span><h3>大黄狗设置</h3><p>调整巡逻频率、后台能力和 AI 诊断。</p></div>
+        <button className="modal-close" onClick={closeSettings} aria-label="关闭设置">×</button>
+      </header>
+      <div className="settings-content">
+        <section className="settings-section">
+          <div className="settings-section-title"><div><h4>巡逻与记录</h4><p>控制异常阈值、采样速度和历史数据保留周期。</p></div><span>基础</span></div>
+          <div className="settings-grid">
+            <label className="setting-field setting-range">CPU 告警阈值 <output>{settings.cpuThreshold}%</output><input type="range" min="70" max="99" value={settings.cpuThreshold} onChange={e => setSettings({...settings, cpuThreshold: Number(e.target.value)})} /></label>
+            <label className="setting-field setting-range">内存告警阈值 <output>{settings.memoryThreshold}%</output><input type="range" min="70" max="99" value={settings.memoryThreshold} onChange={e => setSettings({...settings, memoryThreshold: Number(e.target.value)})} /></label>
+            <label className="setting-field">普通采样间隔 <select value={settings.samplingSeconds} onChange={e => setSettings({...settings, samplingSeconds: Number(e.target.value)})}><option value="2">2 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
+            <label className="setting-field">历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
+          </div>
+        </section>
+        <section className="settings-section">
+          <div className="settings-section-title"><div><h4>后台能力</h4><p>选择大黄狗在 Windows 中可以执行的巡逻任务。</p></div><span>系统</span></div>
+          <div className="settings-toggles">
+            <label className="check"><input type="checkbox" checked={settings.lowPowerMode} onChange={e => setSettings({...settings, lowPowerMode: e.target.checked})} /><span><b>低功耗模式</b><small>固定每 15 秒巡逻，降低后台资源占用。</small></span></label>
+            <label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={e => setSettings({...settings, notificationsEnabled: e.target.checked})} /><span><b>Windows 异常通知</b><small>发现需要关注的问题时发送系统通知。</small></span></label>
+            <label className="check"><input type="checkbox" checked={settings.autoStart} onChange={e => setSettings({...settings, autoStart: e.target.checked})} /><span><b>登录后自动巡逻</b><small>登录 Windows 后自动启动并驻留托盘。</small></span></label>
+            <label className="check"><input type="checkbox" checked={settings.applicationNetworkMonitoring} onChange={e => setSettings({...settings, applicationNetworkMonitoring: e.target.checked})} /><span><b>应用级网络流量</b><small>需要管理员权限启动 ETW 采集会话。</small></span></label>
+          </div>
+          <p className="availability">网络监控只记录每个进程的收发字节数，不采集网络内容；权限不足时数据会保持为空。</p>
+        </section>
+        <section className="settings-section ai-settings">
+          <div className="settings-section-title"><div><h4>MiniMax AI 诊断</h4><p>用当前资源指标和异常摘要分析电脑卡顿原因。</p></div><span className={aiConfigured ? "configured" : ""}>{aiConfigured ? "已配置" : "未配置"}</span></div>
+          <label className="check ai-toggle"><input type="checkbox" checked={settings.minimaxEnabled} onChange={e => setSettings({...settings, minimaxEnabled: e.target.checked})} /><span><b>启用 MiniMax 分析</b><small>用于“大黄，电脑为什么卡？”诊断。</small></span></label>
+          <div className="settings-grid ai-fields">
+            <label className="setting-field">模型 <select value={settings.minimaxModel} onChange={e => setSettings({...settings, minimaxModel: e.target.value})}><option value="MiniMax-M2.7">MiniMax-M2.7</option><option value="MiniMax-M2.7-highspeed">MiniMax-M2.7 高速</option><option value="MiniMax-M2.5">MiniMax-M2.5</option><option value="MiniMax-M2.5-highspeed">MiniMax-M2.5 高速</option></select></label>
+            <label className="setting-field">API Key <input type="password" value={minimaxKey} onChange={e => setMinimaxKey(e.target.value)} autoComplete="off" placeholder={aiConfigured ? "输入新 Key 可替换现有凭据" : "粘贴 MiniMax API Key"} /></label>
+          </div>
+          <p className="ai-privacy">🔒 密钥保存在 Windows 凭据管理器。AI 不会接收文件路径、PID 或文件内容。</p>
+          {aiConfigured && <button className="remove-ai-key" onClick={() => void removeMinimaxKey()}>删除已保存的 API Key</button>}
+        </section>
+        <section className="settings-danger"><div><b>清除本地记忆</b><span>删除历史快照、巡逻记录和动作审计，且无法撤销。</span></div><button onClick={clearMemory}>清除数据</button></section>
+      </div>
+      <footer className="settings-footer"><span>更改只会在点击保存后生效</span><div className="actions"><button className="secondary" onClick={closeSettings}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>{busy ? "正在保存…" : "保存设置"}</button></div></footer>
     </section></div>}
     {preview && <div className="modal-backdrop" onClick={() => setPreview(null)}><section className="modal" onClick={e => e.stopPropagation()}>
       <span className="risk">{preview.riskLevel} · 需要确认</span><h3>{preview.title}</h3><p>{preview.warning}</p>
