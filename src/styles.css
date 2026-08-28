@@ -66,6 +66,7 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 .usage-ranking > .usage-ranking-axis { display: flex; grid-template-columns: none; justify-content: space-between; gap: 0; margin: 9px 80px 0 190px; padding-top: 5px; border-top: 1px solid #ded4c3; color: #948875; font-size: 8px; }.usage-axis-title { display: block; margin: 5px 80px 0 190px; color: #948875; font-size: 8px; text-align: center; }
 .daily-usage > .daily-usage-chart { display: grid; grid-template-columns: 62px minmax(0, 1fr); grid-template-rows: 120px auto; gap: 4px 9px; height: auto; }.daily-usage-y-axis { display: flex; grid-column: 1; grid-row: 1; flex-direction: column; justify-content: space-between; align-items: flex-end; color: #948875; font-size: 8px; }.daily-usage .daily-usage-y-axis span { display: block; width: auto; height: auto; color: inherit; }.daily-usage-bars { display: flex; grid-column: 2; grid-row: 1; justify-content: center; align-items: end; gap: 12px; border-bottom: 1px solid #ded4c3; background: repeating-linear-gradient(to bottom, transparent 0, transparent 39px, #ece4d7 40px); }.daily-usage .daily-usage-bars span { display: grid; grid-template-rows: 1fr auto auto; align-items: end; gap: 3px; width: clamp(38px, 10%, 72px); height: 100%; flex: 0 1 72px; color: #887d6c; text-align: center; }.daily-axis-title { display: flex; grid-column: 1 / -1; grid-row: 2; justify-content: space-between; padding-left: 3px; color: #948875; font-size: 8px; }
 .app-detail-report .report-scroll { overflow-anchor: none; }
+.storage-report { width: min(1040px, 94vw); }.storage-report > .security-note { flex: none; margin: -4px 0 14px; }.storage-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }.storage-overview article { display: flex; min-width: 0; flex-direction: column; gap: 5px; padding: 14px 16px; border-radius: 12px; background: #f5efe5; }.storage-overview span { color: #897d6a; font-size: 10px; }.storage-overview b { overflow: hidden; color: #3f372b; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }.storage-chart-card { padding: 15px 16px 4px; border: 1px solid #e7dece; border-radius: 14px; background: #fffdf9; }.storage-chart-card > div:first-child { display: flex; justify-content: space-between; align-items: center; }.storage-chart-card h4 { margin: 0; font-size: 14px; }.storage-chart-card small { color: #958976; font-size: 10px; }.storage-chart { width: 100%; min-height: 260px; }.storage-disk-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }.storage-disk-list article { padding: 14px; border: 1px solid #e8dfd1; border-radius: 13px; background: #fffdf9; }.storage-disk-list article > div:first-child { display: flex; justify-content: space-between; gap: 10px; }.storage-disk-list article > div:first-child span { color: #796d5b; font-size: 11px; font-weight: 700; }.storage-disk-list article > i { display: block; height: 8px; margin: 11px 0 8px; overflow: hidden; border-radius: 99px; background: #e9e3d8; }.storage-disk-list article > i em { display: block; height: 100%; border-radius: inherit; background: #d0a12d; }.storage-disk-list article.warning > i em { background: #d99c22; }.storage-disk-list article.critical > i em { background: #c5533f; }.storage-disk-values { display: flex; justify-content: space-between; gap: 8px; color: #817562; font-size: 10px; }.storage-disk-list small { display: block; margin-top: 8px; color: #9a8e7b; }
 
 @media (max-width: 1000px) {
   .shell { padding: 24px 24px 58px; }
@@ -79,6 +80,7 @@ header { display: flex; justify-content: space-between; align-items: center; mar
   .finding-card { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px 22px; }
   .finding-card button { grid-column: 1 / -1; justify-self: start; }
   .hardware-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .storage-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -108,6 +110,7 @@ header { display: flex; justify-content: space-between; align-items: center; mar
   .report-tabs { display: flex; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
   .report-tabs button { min-width: 105px; flex: 1 0 auto; }
   .hardware-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .storage-disk-list { grid-template-columns: 1fr; }
   .hardware-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; }
   .security-item { grid-template-columns: 54px minmax(0, 1fr) auto; }
   .security-item .reveal-file { grid-column: 2 / -1; justify-self: start; }
@@ -140,6 +143,7 @@ header { display: flex; justify-content: space-between; align-items: center; mar
   .range-tabs button { flex: 1 0 auto; }
   .monitor-insights, .security-scoreboard, .usage-summary, .hardware-grid { grid-template-columns: 1fr; }
   .app-detail-summary { grid-template-columns: 1fr 1fr; }
+  .storage-overview { grid-template-columns: 1fr 1fr; }
   .process { grid-template-columns: 20px minmax(0, 1fr) auto; gap: 7px; padding-inline: 2px; }
   .process small { font-size: 10px; }
   .timeline li { grid-template-columns: 58px minmax(0, 1fr); gap: 8px; padding-left: 13px; }

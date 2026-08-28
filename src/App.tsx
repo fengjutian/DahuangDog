@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import StorageAnalysis from "./StorageAnalysis";
 import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
 import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
@@ -191,6 +192,7 @@ export default function App() {
   const [securityFilter, setSecurityFilter] = useState<"all" | "medium" | "low">("all");
   const [securityTab, setSecurityTab] = useState<"overview" | "programs" | "startup" | "network" | "tasks" | "services">("overview");
   const [hardwareOpen, setHardwareOpen] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
   const [hardwareTab, setHardwareTab] = useState<"cpu" | "gpu" | "power" | "disks" | "network" | "apps">("cpu");
   const [processQuery, setProcessQuery] = useState("");
   const [timelineOpen, setTimelineOpen] = useState(false);
@@ -406,7 +408,7 @@ export default function App() {
   const appDetailsPresentation = appDetails ? applicationPresentation(appDetails) : null;
 
   return <main className="shell">
-    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
+    <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setStorageOpen(true)}>💾 存储分析</button><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
 
     <section className="hero">
       <div className="avatar" aria-hidden="true">🐕</div>
@@ -524,6 +526,11 @@ export default function App() {
       <div className="section-title"><div><span className="eyebrow">只读扫描 · 删除前再次确认</span><h3>🧹 磁盘清理助手</h3></div><button className="modal-close" onClick={() => setCleanup(null)} aria-label="关闭清理助手">×</button></div>
       <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>下载目录大文件仅供查看，不能在这里删除。</span><button disabled={!cleanupSelection.length} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.length} 项</button></div>
       <div className="report-scroll cleanup-list">{cleanup.candidates.map(item => <label key={item.path}><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.includes(item.path)} onChange={event => setCleanupSelection(event.target.checked ? [...cleanupSelection,item.path] : cleanupSelection.filter(path => path !== item.path))}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可清理" : "只读"}</span></label>)}{!cleanup.candidates.length && <p className="empty">没有发现符合条件的临时文件或大文件。</p>}</div>
+    </section></div>}
+    {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>
+      <p className="security-note">显示 Windows 当前挂载的每个磁盘分区。图表会随巡逻采样自动更新，不会扫描或读取文件内容。</p>
+      <div className="report-scroll"><StorageAnalysis disks={snap.hardware.disks} /></div>
     </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>

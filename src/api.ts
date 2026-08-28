@@ -18,7 +18,10 @@ const demoStatus: CurrentStatus = {
     diskTotalBytes: 512_000_000_000,
     diskAvailableBytes: 180_000_000_000,
     uptimeSeconds: 86400,
-    hardware: { cpuCores: [{ name: "核心 1", usagePercent: 18, frequencyMhz: 3200 }], gpus: [], battery: null, temperatures: [], fans: [], disks: [], networks: [], gpuStatus: "演示模式", fanStatus: "演示模式", appNetworkStatus: "演示模式" },
+    hardware: { cpuCores: [{ name: "核心 1", usagePercent: 18, frequencyMhz: 3200 }], gpus: [], battery: null, temperatures: [], fans: [], disks: [
+      { name: "系统", mountPoint: "C:\\", totalBytes: 512 * 1024 ** 3, availableBytes: 126 * 1024 ** 3, readBps: 1_240_000, writeBps: 420_000 },
+      { name: "数据", mountPoint: "D:\\", totalBytes: 1024 * 1024 ** 3, availableBytes: 684 * 1024 ** 3, readBps: 480_000, writeBps: 160_000 }
+    ], networks: [], gpuStatus: "演示模式", fanStatus: "演示模式", appNetworkStatus: "演示模式" },
     processes: [
       { pid: 4242, parentPid: null, startedAt: Date.now() / 1000 - 3600, name: "chrome.exe", cpuPercent: 8.2, memoryBytes: 1_610_612_736, isCritical: false },
       { pid: 4243, parentPid: 4242, startedAt: Date.now() / 1000 - 3500, name: "chrome.exe", cpuPercent: 2.1, memoryBytes: 410_612_736, isCritical: false },
