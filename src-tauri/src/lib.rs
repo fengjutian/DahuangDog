@@ -161,6 +161,12 @@ async fn list_storage_directory(root: String, force: bool) -> Result<storage_sca
 }
 
 #[tauri::command]
+async fn get_storage_capacity_history(root: String) -> Result<Vec<storage_scan::CapacitySnapshot>, String> {
+    tauri::async_runtime::spawn_blocking(move || storage_scan::capacity_history(root))
+        .await.map_err(|error| format!("容量历史读取任务异常结束：{error}"))?
+}
+
+#[tauri::command]
 fn scan_cleanup() -> Result<CleanupReport, String> { Ok(maintenance::scan_cleanup()) }
 
 #[tauri::command]
@@ -339,6 +345,7 @@ pub fn run() {
             scan_storage_tree,
             cancel_storage_scan,
             list_storage_directory,
+            get_storage_capacity_history,
             open_file_location,
             export_usage_csv,
             get_settings,

@@ -4,8 +4,8 @@ import { SunburstChart, TreemapChart } from "echarts/charts";
 import { TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { ECharts, EChartsCoreOption } from "echarts/core";
-import { cancelStorageScan, listStorageDirectory, scanStorageTree } from "./api";
-import type { HardwareSnapshot, StorageEntry, StorageScanResult } from "./types";
+import { cancelStorageScan, getStorageCapacityHistory, listStorageDirectory, scanStorageTree } from "./api";
+import type { HardwareSnapshot, StorageCapacitySnapshot, StorageEntry, StorageScanResult } from "./types";
 
 use([TreemapChart, SunburstChart, TooltipComponent, CanvasRenderer]);
 type DiskMetric = HardwareSnapshot["disks"][number];
@@ -24,6 +24,19 @@ function formatBytes(value: number): string {
   if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${value} B`;
+}
+const snapshotTime = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+function CapacityHistory({ snapshots }: { snapshots: StorageCapacitySnapshot[] }) {
+  const ordered = [...snapshots].reverse();
+  const peak = Math.max(...ordered.map(item => item.sizeBytes), 1);
+  const points = ordered.map((item, index) => `${ordered.length === 1 ? 50 : index / (ordered.length - 1) * 100},${96 - item.sizeBytes / peak * 88}`).join(" ");
+  const latest = snapshots[0], previous = snapshots[1];
+  const change = latest && previous ? latest.sizeBytes - previous.sizeBytes : null;
+  return <section className="storage-history"><div><b>容量变化</b><span>{change == null ? "首次快照" : `${change >= 0 ? "+" : "-"}${formatBytes(Math.abs(change))}`}</span><small>保留最近 180 次，展示最近 30 次精确扫描</small></div>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="容量历史趋势"><polyline points={points}/></svg>
+    <ol>{snapshots.slice(0, 3).map(item => <li key={item.capturedAt}><time>{snapshotTime.format(item.capturedAt)}</time><b>{formatBytes(item.sizeBytes)}</b><span>{item.fileCount.toLocaleString()} 个文件</span></li>)}</ol>
+  </section>;
 }
 function chartNode(entry: StorageEntry): { name: string; value: number; path: string; kind: string; children?: ReturnType<typeof chartNode>[] } {
   return { name: entry.name, value: entry.kind === "directory" && entry.sizeBytes === 0 ? 1024 * 1024 : entry.sizeBytes, path: entry.path, kind: entry.kind,
@@ -76,6 +89,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
   const [scanning, setScanning] = useState(false);
   const [resultExact, setResultExact] = useState(false);
   const [error, setError] = useState("");
+  const [history, setHistory] = useState<StorageCapacitySnapshot[]>([]);
   const scanGeneration = useRef(0);
   const activeTask = useRef<string | null>(null);
   const cancelActiveScan = useCallback(() => {
@@ -84,6 +98,10 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     if (taskId) void cancelStorageScan(taskId);
   }, []);
   useEffect(() => () => { cancelActiveScan(); }, [cancelActiveScan]);
+  useEffect(() => {
+    if (!selectedRoot) return;
+    void getStorageCapacityHistory(selectedRoot).then(setHistory).catch(() => setHistory([]));
+  }, [selectedRoot]);
   const browse = useCallback(async (path: string, force = false) => {
     cancelActiveScan();
     const cached = directoryCache.get(path);
@@ -115,7 +133,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     const taskId = crypto.randomUUID();
     activeTask.current = taskId;
     setSelectedRoot(root); setScanning(true); setError("");
-    setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0, cacheHit: false, indexedAt: Date.now() });
+    setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0, cacheHit: false, indexedAt: Date.now(), resumed: false, completedItems: 0, totalItems: 0 });
     let pending: StorageEntry[] = [];
     let flushTimer: number | undefined;
     const flush = () => {
@@ -135,7 +153,10 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
         flushTimer ??= window.setTimeout(flush, 150);
       });
       if (flushTimer != null) window.clearTimeout(flushTimer);
-      if (generation === scanGeneration.current) { scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); setResultExact(true); }
+      if (generation === scanGeneration.current) {
+        scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); setResultExact(true);
+        void getStorageCapacityHistory(root).then(setHistory).catch(() => undefined);
+      }
     } catch (reason) { if (generation === scanGeneration.current && !String(reason).includes("扫描已取消")) setError(String(reason)); }
     finally {
       if (activeTask.current === taskId) activeTask.current = null;
@@ -155,6 +176,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     {result && (!scanning || result.root.children.length > 0) && <>
       {scanning && <div className="storage-progress-note"><span className="storage-spinner"/><span>正在逐项计算，已显示 {result.root.children.length} 个顶层项目；图表可立即使用。</span></div>}
       {result.cacheHit && !scanning && <div className="storage-progress-note"><span>已复用 SQLite 目录索引；目录修改后会自动重新解析。</span></div>}
+      {result.resumed && !scanning && <div className="storage-progress-note"><span>本次已从上次中断位置继续，复用了 {result.completedItems} 个顶层节点。</span></div>}
       <div className="storage-overview storage-scan-overview">
         <article><span>{resultExact ? "已统计容量" : "当前层文件大小"}</span><b>{formatBytes(result.root.sizeBytes)}</b></article><article><span>{resultExact ? "全部文件" : "当前层文件"}</span><b>{result.fileCount.toLocaleString()}</b></article>
         <article><span>{resultExact ? "全部文件夹" : "当前层文件夹"}</span><b>{result.directoryCount.toLocaleString()}</b></article><article><span>无权限/已跳过</span><b>{result.skippedCount.toLocaleString()}</b></article>
@@ -162,6 +184,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
       <section className="storage-chart-card"><div className="storage-chart-head"><div><h4>{selectedRoot} 文件占用</h4><small>文件大小立即显示；文件夹点击进入，精确占比需单独计算</small></div>
         <div className="storage-chart-actions">{parentPath && <button className="storage-rescan" disabled={scanning} onClick={() => void browse(parentPath)}>返回上级</button>}<button className="storage-rescan" disabled={scanning} onClick={() => void scan(selectedRoot)}>精确计算当前目录</button>{scanning && <button className="storage-rescan" onClick={cancelActiveScan}>取消扫描</button>}<button className="storage-rescan" disabled={scanning} onClick={() => void browse(selectedRoot, true)}>刷新</button><div className="storage-chart-tabs" role="tablist"><button className={mode === "treemap" ? "active" : ""} onClick={() => setMode("treemap")}>矩形树图</button><button className={mode === "sunburst" ? "active" : ""} onClick={() => setMode("sunburst")}>旭日图</button></div></div>
       </div><StorageChart root={result.root} mode={mode} onOpen={browse} /></section>
+      {history.length > 0 && <CapacityHistory snapshots={history} />}
     </>}
   </>;
 }

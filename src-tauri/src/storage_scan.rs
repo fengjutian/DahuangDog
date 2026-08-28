@@ -30,8 +30,11 @@ pub struct StorageScanResult {
     pub skipped_count: u64,
     pub cache_hit: bool,
     pub indexed_at: u64,
+    #[serde(default)]
     pub resumed: bool,
+    #[serde(default)]
     pub completed_items: usize,
+    #[serde(default)]
     pub total_items: usize,
 }
 
@@ -285,6 +288,7 @@ where F: FnMut(StorageEntry) {
         file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped, cache_hit: false, indexed_at: now_millis(),
         resumed, completed_items: total_items, total_items,
     };
+    save_nodes(&path, &result.root);
     save_index(&path, true, modified_at, &result);
     save_capacity_snapshot(&path, &result);
     remove_checkpoint(&path);
@@ -318,11 +322,13 @@ pub fn list_directory(root: String, force: bool) -> Result<StorageScanResult, St
         children.push(StorageEntry { name: format!("其他 {} 个项目", hidden.len()), path: path.display().to_string(), size_bytes: hidden_size, kind: "aggregate".into(), children: Vec::new() });
     }
     let size_bytes = children.iter().map(|entry| entry.size_bytes).sum();
+    let visible_items = children.len();
     let result = StorageScanResult {
         root: StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory".into(), children },
         file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped, cache_hit: false, indexed_at: now_millis(),
-        resumed: false, completed_items: children.len(), total_items: children.len(),
+        resumed: false, completed_items: visible_items, total_items: visible_items,
     };
+    save_nodes(&path, &result.root);
     save_index(&path, false, modified_at, &result);
     Ok(result)
 }

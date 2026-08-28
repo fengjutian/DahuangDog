@@ -87,6 +87,17 @@ export interface StorageScanResult {
   skippedCount: number;
   cacheHit: boolean;
   indexedAt: number;
+  resumed: boolean;
+  completedItems: number;
+  totalItems: number;
+}
+
+export interface StorageCapacitySnapshot {
+  capturedAt: number;
+  sizeBytes: number;
+  fileCount: number;
+  directoryCount: number;
+  skippedCount: number;
 }
 
 export interface Finding {

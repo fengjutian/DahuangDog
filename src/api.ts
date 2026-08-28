@@ -1,5 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, StorageScanResult, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, StorageCapacitySnapshot, StorageScanResult, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -60,6 +60,11 @@ export async function cancelStorageScan(taskId: string): Promise<boolean> {
 export async function listStorageDirectory(root: string, force = false): Promise<StorageScanResult> {
   if (!isTauri()) throw new Error("浏览器预览模式无法读取本机目录，请在桌面应用中使用");
   return invoke("list_storage_directory", { root, force });
+}
+
+export async function getStorageCapacityHistory(root: string): Promise<StorageCapacitySnapshot[]> {
+  if (!isTauri()) return [];
+  return invoke("get_storage_capacity_history", { root });
 }
 
 export async function prepareTerminate(pid: number, startedAt: number): Promise<ActionPreview> {

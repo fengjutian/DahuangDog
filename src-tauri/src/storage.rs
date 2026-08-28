@@ -105,6 +105,22 @@ impl Storage {
                 indexed_at INTEGER NOT NULL,
                 result_json TEXT NOT NULL,
                 PRIMARY KEY(path, exact)
+             );
+             CREATE TABLE IF NOT EXISTS storage_nodes (
+                root_path TEXT NOT NULL, path TEXT NOT NULL, parent_path TEXT,
+                name TEXT NOT NULL, kind TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL, indexed_at INTEGER NOT NULL,
+                PRIMARY KEY(root_path, path)
+             );
+             CREATE INDEX IF NOT EXISTS idx_storage_nodes_parent ON storage_nodes(root_path, parent_path);
+             CREATE TABLE IF NOT EXISTS storage_scan_tasks (
+                root_path TEXT PRIMARY KEY, root_modified_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL, checkpoint_json TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS storage_capacity_snapshots (
+                id INTEGER PRIMARY KEY, root_path TEXT NOT NULL, captured_at INTEGER NOT NULL,
+                size_bytes INTEGER NOT NULL, file_count INTEGER NOT NULL,
+                directory_count INTEGER NOT NULL, skipped_count INTEGER NOT NULL
              );",
             )
             .map_err(|error| format!("无法初始化本地记忆：{error}"))?;
@@ -365,7 +381,7 @@ impl Storage {
 
     pub fn clear_memory(&self) -> rusqlite::Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions; DELETE FROM application_snapshots; DELETE FROM alerts; DELETE FROM storage_directory_index;",
+            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions; DELETE FROM application_snapshots; DELETE FROM alerts; DELETE FROM storage_directory_index; DELETE FROM storage_nodes; DELETE FROM storage_scan_tasks; DELETE FROM storage_capacity_snapshots;",
         )
     }
 
