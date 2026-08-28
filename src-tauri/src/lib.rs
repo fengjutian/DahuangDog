@@ -140,6 +140,12 @@ async fn scan_storage_tree(root: String, on_entry: tauri::ipc::Channel<storage_s
 }
 
 #[tauri::command]
+async fn list_storage_directory(root: String) -> Result<storage_scan::StorageScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || storage_scan::list_directory(root))
+        .await.map_err(|error| format!("目录读取任务异常结束：{error}"))?
+}
+
+#[tauri::command]
 fn scan_cleanup() -> Result<CleanupReport, String> { Ok(maintenance::scan_cleanup()) }
 
 #[tauri::command]
@@ -316,6 +322,7 @@ pub fn run() {
             test_minimax_connection,
             get_security_report,
             scan_storage_tree,
+            list_storage_directory,
             open_file_location,
             export_usage_csv,
             get_settings,

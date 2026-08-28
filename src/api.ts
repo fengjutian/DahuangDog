@@ -52,6 +52,11 @@ export async function scanStorageTree(root: string, onEntry: (entry: StorageScan
   return invoke("scan_storage_tree", { root, onEntry: channel });
 }
 
+export async function listStorageDirectory(root: string): Promise<StorageScanResult> {
+  if (!isTauri()) throw new Error("浏览器预览模式无法读取本机目录，请在桌面应用中使用");
+  return invoke("list_storage_directory", { root });
+}
+
 export async function prepareTerminate(pid: number, startedAt: number): Promise<ActionPreview> {
   if (!isTauri()) throw new Error("浏览器预览模式不能执行系统操作");
   return invoke("prepare_terminate_process", { pid, startedAt });

@@ -106,3 +106,36 @@ where F: FnMut(StorageEntry) {
     let root = StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory", children };
     Ok(StorageScanResult { root, file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped })
 }
+
+pub fn list_directory(root: String) -> Result<StorageScanResult, String> {
+    let path = PathBuf::from(&root);
+    if !path.is_absolute() || !path.exists() || !path.is_dir() {
+        return Err("请选择一个存在的目录".into());
+    }
+    let mut children = Vec::new();
+    let mut stats = ScanStats { directories: 1, ..Default::default() };
+    for item in fs::read_dir(&path).map_err(|error| format!("无法读取该目录：{error}"))? {
+        let item = match item { Ok(value) => value, Err(_) => { stats.skipped += 1; continue; } };
+        let child_path = item.path();
+        let metadata = match fs::symlink_metadata(&child_path) { Ok(value) => value, Err(_) => { stats.skipped += 1; continue; } };
+        if metadata.file_type().is_symlink() { stats.skipped += 1; continue; }
+        if metadata.is_dir() {
+            stats.directories += 1;
+            children.push(StorageEntry { name: display_name(&child_path), path: child_path.display().to_string(), size_bytes: 0, kind: "directory", children: Vec::new() });
+        } else if metadata.is_file() {
+            stats.files += 1;
+            children.push(StorageEntry { name: display_name(&child_path), path: child_path.display().to_string(), size_bytes: metadata.len(), kind: "file", children: Vec::new() });
+        }
+    }
+    children.sort_unstable_by(|a, b| a.kind.cmp(b.kind).then_with(|| b.size_bytes.cmp(&a.size_bytes)).then_with(|| a.name.cmp(&b.name)));
+    if children.len() > MAX_VISIBLE_CHILDREN {
+        let hidden = children.split_off(MAX_VISIBLE_CHILDREN);
+        let hidden_size = hidden.iter().map(|entry| entry.size_bytes).sum();
+        children.push(StorageEntry { name: format!("其他 {} 个项目", hidden.len()), path: path.display().to_string(), size_bytes: hidden_size, kind: "aggregate", children: Vec::new() });
+    }
+    let size_bytes = children.iter().map(|entry| entry.size_bytes).sum();
+    Ok(StorageScanResult {
+        root: StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory", children },
+        file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped,
+    })
+}
