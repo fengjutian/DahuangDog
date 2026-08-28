@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
 import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
@@ -117,6 +117,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
   const [selectedApp, setSelectedApp] = useState<number | null>(null);
+  const appDetailScrollRef = useRef<HTMLDivElement | null>(null);
+  const appDetailScrollTop = useRef(0);
   const [usage, setUsage] = useState<AppUsageRecord[] | null>(null);
   const [usageSummary, setUsageSummary] = useState<AppUsageSummary | null>(null);
   const [usageQuery, setUsageQuery] = useState("");
@@ -161,6 +163,12 @@ export default function App() {
   }, [historyRange]);
 
   useEffect(() => { void getSettings().then(setSettings).catch(() => undefined); }, []);
+
+  useLayoutEffect(() => {
+    if (selectedApp != null && appDetailScrollRef.current) {
+      appDetailScrollRef.current.scrollTop = appDetailScrollTop.current;
+    }
+  }, [selectedApp, status?.snapshot?.capturedAt]);
 
   useEffect(() => {
     if (!("__TAURI_INTERNALS__" in window)) return;
@@ -381,7 +389,7 @@ export default function App() {
         <div className="process-list">{visibleApplications.map(app => { const presentation = applicationPresentation(app); return <div className="app-group" key={`${app.rootPid}-${app.name}`}>
           <div className="process application app-summary-row">
             <button className="process-expand" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)} aria-label={expandedApp === app.rootPid ? `收起 ${app.name} 进程` : `展开 ${app.name} 进程`}>{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</button>
-            <button className="app-detail-trigger" onClick={() => setSelectedApp(app.rootPid)}>
+            <button className="app-detail-trigger" onClick={() => { appDetailScrollTop.current = 0; setSelectedApp(app.rootPid); }}>
               <span className="process-name"><b>{presentation.productName}</b><small>{app.name} · {app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
               <span className="process-summary"><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
             </button>
@@ -417,7 +425,7 @@ export default function App() {
     </section></div>}
     {appDetails && appDetailsPresentation && <div className="modal-backdrop" onClick={() => setSelectedApp(null)}><section className="modal report-modal app-detail-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">应用实时详情 · {appDetails.name}</span><h3>{appDetailsPresentation.productName}</h3></div><button className="modal-close" onClick={() => setSelectedApp(null)} aria-label="关闭应用详情">×</button></div>
-      <div className="report-scroll">
+      <div className="report-scroll" ref={appDetailScrollRef} onScroll={event => { appDetailScrollTop.current = event.currentTarget.scrollTop; }}>
         <div className="app-detail-intro"><p>{appDetailsPresentation.description}</p><div><span>发布者 <b>{appDetails.publisher || "程序文件未提供"}</b></span><span>程序位置 <code title={appDetails.executablePath || ""}>{appDetails.executablePath || "当前权限无法读取"}</code></span></div></div>
         <div className="app-detail-summary">
           <article><span>CPU 总占用</span><b>{appDetails.cpuPercent.toFixed(1)}%</b></article>
@@ -432,9 +440,9 @@ export default function App() {
         <div className="app-detail-identity"><span>根进程 PID <b>{appDetails.rootPid}</b></span><span>启动于 <b>{new Date(appDetails.rootProcess.startedAt * 1000).toLocaleString("zh-CN")}</b></span><span>{appDetails.rootProcess.isCritical ? "Windows 关键进程" : "普通应用进程"}</span><button onClick={() => { setAppHistoryReturnApp(appDetails.rootPid); void showApplicationHistory(appDetails.name); }}>查看历史曲线</button></div>
         <div className="app-process-detail-head"><h4>包含的进程</h4><span>点击进程可查看更多操作</span></div>
         <div className="app-process-detail-list">
-          <div className="app-process-detail-row head"><b>进程</b><b>PID</b><b>CPU</b><b>内存</b><b>磁盘读 / 写</b><b>线程 / 句柄</b></div>
+          <div className="app-process-detail-row head"><b>进程</b><b>PID</b><b>启动时间</b><b>CPU</b><b>内存</b><b>磁盘读 / 写</b><b>线程 / 句柄</b></div>
           {appDetails.members.map(process => <button className="app-process-detail-row" key={`${process.pid}-${process.startedAt}`} onClick={() => { setSelectedApp(null); void inspect(process); }}>
-            <span title={process.name}>{process.name}</span><span>{process.pid}</span><span>{process.cpuPercent.toFixed(1)}%</span><span>{formatBytes(process.memoryBytes)}</span><span>{formatRate(process.diskReadBps ?? 0)} / {formatRate(process.diskWriteBps ?? 0)}</span><span>{process.threadCount ?? 0} / {process.handleCount ?? "--"}</span>
+            <span title={process.name}>{process.name}</span><span>{process.pid}</span><time title={new Date(process.startedAt * 1000).toLocaleString("zh-CN")}>{new Date(process.startedAt * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>{process.cpuPercent.toFixed(1)}%</span><span>{formatBytes(process.memoryBytes)}</span><span>{formatRate(process.diskReadBps ?? 0)} / {formatRate(process.diskWriteBps ?? 0)}</span><span>{process.threadCount ?? 0} / {process.handleCount ?? "--"}</span>
           </button>)}
         </div>
       </div>
