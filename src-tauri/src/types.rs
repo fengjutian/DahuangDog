@@ -27,6 +27,8 @@ pub struct ApplicationGroup {
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
     pub network_bps: Option<u64>,
+    pub network_receive_bps: Option<u64>,
+    pub network_send_bps: Option<u64>,
     pub root_process: ProcessSample,
     pub members: Vec<ProcessSample>,
 }
@@ -258,6 +260,7 @@ pub struct UserSettings {
     pub notifications_enabled: bool,
     pub retention_days: u32,
     pub auto_start: bool,
+    pub application_network_monitoring: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -287,6 +290,7 @@ impl Default for UserSettings {
             notifications_enabled: true,
             retention_days: 7,
             auto_start: false,
+            application_network_monitoring: false,
         }
     }
 }

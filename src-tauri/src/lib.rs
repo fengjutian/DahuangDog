@@ -1,5 +1,6 @@
 mod monitor;
 mod maintenance;
+mod network_etw;
 mod security;
 mod storage;
 mod types;
@@ -304,7 +305,12 @@ pub fn run() {
                         show_main_window(app);
                         let _ = app.emit("ui://open-panel", event.id().as_ref());
                     }
-                    "quit" => app.exit(0),
+                    "quit" => {
+                        if let Ok(mut monitor) = app.state::<SharedMonitor>().lock() {
+                            monitor.shutdown();
+                        }
+                        app.exit(0)
+                    },
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {

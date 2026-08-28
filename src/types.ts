@@ -30,6 +30,8 @@ export interface ApplicationGroup {
   diskReadBps?: number;
   diskWriteBps?: number;
   networkBps?: number | null;
+  networkReceiveBps?: number | null;
+  networkSendBps?: number | null;
   rootProcess: ProcessSample;
   members: ProcessSample[];
 }
@@ -200,6 +202,7 @@ export interface UserSettings {
   notificationsEnabled: boolean;
   retentionDays: number;
   autoStart: boolean;
+  applicationNetworkMonitoring: boolean;
 }
 
 export interface AppUsageRecord {

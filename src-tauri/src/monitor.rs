@@ -1,4 +1,5 @@
 use crate::storage::Storage;
+use crate::network_etw::{NetworkCollector, NetworkRate};
 use crate::types::{
     ActionPreview, ActionResult, AlertRecord, AppUsageRecord, ApplicationGroup, ApplicationHistory, CurrentStatus, Finding,
     BatteryMetric, CpuCoreMetric, DiskMetric, FanMetric, GpuMetric, HardwareSnapshot,
@@ -43,7 +44,11 @@ fn required_high_samples(interval_seconds: u64) -> u8 {
     (60 / interval_seconds.max(1)).clamp(1, u8::MAX as u64) as u8
 }
 
-fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup> {
+fn build_application_groups(
+    processes: &[ProcessSample],
+    network_rates: &HashMap<u32, NetworkRate>,
+    network_available: bool,
+) -> Vec<ApplicationGroup> {
     let index: HashMap<u32, &ProcessSample> = processes
         .iter()
         .map(|process| (process.pid, process))
@@ -82,6 +87,8 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
             let memory_bytes = members.iter().map(|process| process.memory_bytes).sum();
             let disk_read_bps = members.iter().map(|process| process.disk_read_bps).sum();
             let disk_write_bps = members.iter().map(|process| process.disk_write_bps).sum();
+            let network_receive_bps = members.iter().map(|process| network_rates.get(&process.pid).map(|rate| rate.receive_bps).unwrap_or(0)).sum::<u64>();
+            let network_send_bps = members.iter().map(|process| network_rates.get(&process.pid).map(|rate| rate.send_bps).unwrap_or(0)).sum::<u64>();
             Some(ApplicationGroup {
                 root_pid,
                 name: root_process.name.clone(),
@@ -90,7 +97,9 @@ fn build_application_groups(processes: &[ProcessSample]) -> Vec<ApplicationGroup
                 memory_bytes,
                 disk_read_bps,
                 disk_write_bps,
-                network_bps: None,
+                network_bps: network_available.then_some(network_receive_bps.saturating_add(network_send_bps)),
+                network_receive_bps: network_available.then_some(network_receive_bps),
+                network_send_bps: network_available.then_some(network_send_bps),
                 root_process,
                 members,
             })
@@ -286,6 +295,7 @@ pub struct Monitor {
     app_sessions: HashMap<(u32, u64), AppUsageRecord>,
     last_lifecycle_tick: u64,
     last_patrol_at: u64,
+    network_collector: NetworkCollector,
 }
 
 impl Monitor {
@@ -298,6 +308,7 @@ impl Monitor {
             .as_ref()
             .map(Storage::load_settings)
             .unwrap_or_default();
+        let application_network_monitoring = settings.application_network_monitoring;
         let mut monitor = Self {
             system: System::new_all(),
             disks: Disks::new_with_refreshed_list(),
@@ -322,6 +333,7 @@ impl Monitor {
             app_sessions: HashMap::new(),
             last_lifecycle_tick: now(),
             last_patrol_at: now(),
+            network_collector: NetworkCollector::new(application_network_monitoring),
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -378,7 +390,13 @@ impl Monitor {
             let b_score = b.cpu_percent as f64 * 100_000_000.0 + b.memory_bytes as f64;
             b_score.total_cmp(&a_score)
         });
-        let all_applications = build_application_groups(&processes);
+        let app_network_status = self.network_collector.status();
+        let network_rates = self.network_collector.rates(self.sampling_interval_seconds());
+        let all_applications = build_application_groups(
+            &processes,
+            &network_rates,
+            app_network_status.state == "running",
+        );
         self.update_app_lifecycle(&all_applications);
         let applications = all_applications
             .into_iter()
@@ -422,7 +440,9 @@ impl Monitor {
             networks: self.networks.iter().map(|(name, data)| NetworkMetric { name: name.clone(), received_bps: data.received() / self.sampling_interval_seconds().max(1), transmitted_bps: data.transmitted() / self.sampling_interval_seconds().max(1) }).collect(),
             gpu_status,
             fan_status: "Windows 未向当前进程公开风扇转速传感器".into(),
-            app_network_status: "Windows 需要 ETW 会话才能可靠归属应用网络流量，当前版本暂不伪造数据".into(),
+            app_network_status: if app_network_status.events_lost > 0 {
+                format!("{}；已有 {} 个事件丢失，本段数据可能不完整", app_network_status.message, app_network_status.events_lost)
+            } else { app_network_status.message },
         };
         let snapshot = SystemSnapshot {
             captured_at: now() * 1000,
@@ -1049,11 +1069,16 @@ impl Monitor {
         if let Some(storage) = &self.storage {
             storage.save_settings(&settings)?;
         }
+        self.network_collector.set_enabled(settings.application_network_monitoring);
         self.settings = settings;
         self.high_cpu_samples = 0;
         self.high_memory_samples = 0;
         self.push_event("patrol", "巡逻设置已经更新");
         Ok(self.settings.clone())
+    }
+
+    pub fn shutdown(&mut self) {
+        self.network_collector.stop();
     }
 
     pub fn clear_memory(&mut self) -> Result<(), String> {
@@ -1360,12 +1385,15 @@ mod tests {
             disk_read_bps: 0,
             disk_write_bps: 0,
         };
+        let mut network_rates = HashMap::new();
+        network_rates.insert(10, NetworkRate { receive_bps: 1_000, send_bps: 200 });
+        network_rates.insert(11, NetworkRate { receive_bps: 2_000, send_bps: 300 });
         let groups = build_application_groups(&[
             sample(10, None, "chrome.exe", 5.0, 100),
             sample(11, Some(10), "chrome.exe", 7.0, 200),
             sample(12, Some(11), "chrome.exe", 3.0, 300),
             sample(20, Some(10), "helper.exe", 1.0, 50),
-        ]);
+        ], &network_rates, true);
         let chrome = groups
             .iter()
             .find(|group| group.name == "chrome.exe")
@@ -1374,6 +1402,9 @@ mod tests {
         assert_eq!(chrome.member_count, 3);
         assert_eq!(chrome.cpu_percent, 15.0);
         assert_eq!(chrome.memory_bytes, 600);
+        assert_eq!(chrome.network_receive_bps, Some(3_000));
+        assert_eq!(chrome.network_send_bps, Some(500));
+        assert_eq!(chrome.network_bps, Some(3_500));
         assert!(groups
             .iter()
             .any(|group| group.name == "helper.exe" && group.member_count == 1));

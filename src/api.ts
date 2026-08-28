@@ -143,7 +143,7 @@ export async function exportUsageCsv(content: string): Promise<ActionResult> {
   return invoke("export_usage_csv", { content });
 }
 
-const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false };
+const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false, applicationNetworkMonitoring: false };
 
 export async function getSettings(): Promise<UserSettings> {
   return isTauri() ? invoke("get_settings") : demoSettings;
