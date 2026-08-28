@@ -121,3 +121,20 @@ pub fn diagnose(model: &str, context: Value) -> Result<LocalDiagnosis, String> {
     let confidence = match parsed.get("confidence").and_then(Value::as_str) { Some("high") => "high", Some("low") => "low", _ => "medium" };
     Ok(LocalDiagnosis { summary, details: list("details"), suggestions: list("suggestions"), confidence: confidence.into(), source: "minimax".into(), model: Some(model.into()) })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_json_after_reasoning_block() {
+        let parsed = response_json("<think>private reasoning</think>\n{\"summary\":\"正常\",\"details\":[],\"suggestions\":[],\"confidence\":\"high\"}").unwrap();
+        assert_eq!(parsed["summary"], "正常");
+    }
+
+    #[test]
+    fn model_allowlist_rejects_unexpected_values() {
+        assert!(validate_model("MiniMax-M2.7").is_ok());
+        assert!(validate_model("custom-model").is_err());
+    }
+}
