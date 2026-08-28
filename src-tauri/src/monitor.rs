@@ -369,7 +369,8 @@ impl Monitor {
             .unwrap_or_default();
         let application_network_monitoring = settings.application_network_monitoring;
         let mut monitor = Self {
-            system: System::new_all(),
+            // 首次完整采样由后台巡逻线程执行，避免在创建 WebView 前同步枚举所有进程。
+            system: System::new(),
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
             components: None,

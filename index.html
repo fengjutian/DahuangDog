@@ -5,9 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f4b942" />
     <title>大黄狗</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #f5f0e7; }
+      #root { min-height: 100%; }
+      .boot-screen { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 80% 0, #ffe8a8 0, transparent 32%), #f5f0e7; color: #30291d; font-family: Inter, "Microsoft YaHei UI", system-ui, sans-serif; }
+      .boot-card { display: flex; align-items: center; gap: 18px; padding: 22px 28px; border: 1px solid #e5d7bd; border-radius: 20px; background: #fffaf0; box-shadow: 0 18px 50px #805c1917; }
+      .boot-dog { font-size: 46px; }
+      .boot-card b { display: block; margin-bottom: 6px; font-size: 18px; }
+      .boot-card span { color: #807563; font-size: 12px; }
+      .boot-progress { width: 150px; height: 4px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: #eadfca; }
+      .boot-progress::after { content: ""; display: block; width: 45%; height: 100%; border-radius: inherit; background: #d4a52b; animation: boot-progress 1s ease-in-out infinite alternate; }
+      @keyframes boot-progress { to { transform: translateX(125%); } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="boot-screen" role="status"><div class="boot-card"><div class="boot-dog">🐕</div><div><b>大黄狗正在醒来</b><span>正在连接本地巡逻服务…</span><div class="boot-progress"></div></div></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

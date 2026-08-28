@@ -16,7 +16,8 @@
       "height": 820,
       "minWidth": 360,
       "minHeight": 620,
-      "center": true
+      "center": true,
+      "backgroundColor": "#f5f0e7"
     }],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
