@@ -473,8 +473,8 @@ export default function App() {
     </section></div>}
     <nav className="bottom-menu" aria-label="底部菜单">
       <div className="bottom-menu-inner">
-        <button className="bottom-settings" onClick={() => setSettingsOpen(true)} aria-label="打开设置"><span>⚙️</span><b>设置</b></button>
         <div className={`live live-${status.dogState}`} role="status" aria-live="polite"><i /><span>{stateLabel[status.dogState]}</span></div>
+        <button className="bottom-settings" onClick={() => setSettingsOpen(true)} aria-label="打开设置"><span>⚙️</span><b>设置</b></button>
       </div>
     </nav>
 
