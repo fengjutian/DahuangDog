@@ -9,10 +9,10 @@ mod types;
 
 use monitor::Monitor;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     process::Command,
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock},
     thread,
     time::Duration,
 };
@@ -30,6 +30,11 @@ use types::{
 
 type SharedMonitor = Arc<Mutex<Monitor>>;
 type SharedMaintenance = Arc<Mutex<maintenance::MaintenanceManager>>;
+static STORAGE_SCAN_TASKS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn storage_scan_tasks() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    STORAGE_SCAN_TASKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[tauri::command]
 fn get_current_status(state: tauri::State<'_, SharedMonitor>) -> Result<CurrentStatus, String> {
@@ -133,15 +138,25 @@ fn get_security_report() -> Result<SecurityReport, String> {
 }
 
 #[tauri::command]
-async fn scan_storage_tree(root: String, on_entry: tauri::ipc::Channel<storage_scan::StorageEntry>) -> Result<storage_scan::StorageScanResult, String> {
-    tauri::async_runtime::spawn_blocking(move || storage_scan::scan_progressive(root, |entry| { let _ = on_entry.send(entry); }))
-        .await
-        .map_err(|error| format!("扫描任务异常结束：{error}"))?
+async fn scan_storage_tree(root: String, task_id: String, force: bool, on_entry: tauri::ipc::Channel<storage_scan::StorageEntry>) -> Result<storage_scan::StorageScanResult, String> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    storage_scan_tasks().lock().map_err(|_| "扫描任务状态暂时不可用".to_string())?
+        .insert(task_id.clone(), Arc::clone(&cancelled));
+    let result = tauri::async_runtime::spawn_blocking(move || storage_scan::scan_progressive(root, force, cancelled, |entry| { let _ = on_entry.send(entry); }))
+        .await.map_err(|error| format!("扫描任务异常结束：{error}"))?;
+    if let Ok(mut tasks) = storage_scan_tasks().lock() { tasks.remove(&task_id); }
+    result
 }
 
 #[tauri::command]
-async fn list_storage_directory(root: String) -> Result<storage_scan::StorageScanResult, String> {
-    tauri::async_runtime::spawn_blocking(move || storage_scan::list_directory(root))
+fn cancel_storage_scan(task_id: String) -> bool {
+    storage_scan_tasks().lock().ok().and_then(|tasks| tasks.get(&task_id).cloned())
+        .map(|flag| { flag.store(true, Ordering::Relaxed); true }).unwrap_or(false)
+}
+
+#[tauri::command]
+async fn list_storage_directory(root: String, force: bool) -> Result<storage_scan::StorageScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || storage_scan::list_directory(root, force))
         .await.map_err(|error| format!("目录读取任务异常结束：{error}"))?
 }
 
@@ -322,6 +337,7 @@ pub fn run() {
             test_minimax_connection,
             get_security_report,
             scan_storage_tree,
+            cancel_storage_scan,
             list_storage_directory,
             open_file_location,
             export_usage_csv,

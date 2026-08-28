@@ -45,16 +45,21 @@ export async function getCurrentStatus(): Promise<CurrentStatus> {
   return isTauri() ? invoke("get_current_status") : demoStatus;
 }
 
-export async function scanStorageTree(root: string, onEntry: (entry: StorageScanResult["root"]) => void): Promise<StorageScanResult> {
+export async function scanStorageTree(root: string, taskId: string, force: boolean, onEntry: (entry: StorageScanResult["root"]) => void): Promise<StorageScanResult> {
   if (!isTauri()) throw new Error("浏览器预览模式无法扫描本机磁盘，请在桌面应用中使用");
   const channel = new Channel<StorageScanResult["root"]>();
   channel.onmessage = onEntry;
-  return invoke("scan_storage_tree", { root, onEntry: channel });
+  return invoke("scan_storage_tree", { root, taskId, force, onEntry: channel });
 }
 
-export async function listStorageDirectory(root: string): Promise<StorageScanResult> {
+export async function cancelStorageScan(taskId: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke("cancel_storage_scan", { taskId });
+}
+
+export async function listStorageDirectory(root: string, force = false): Promise<StorageScanResult> {
   if (!isTauri()) throw new Error("浏览器预览模式无法读取本机目录，请在桌面应用中使用");
-  return invoke("list_storage_directory", { root });
+  return invoke("list_storage_directory", { root, force });
 }
 
 export async function prepareTerminate(pid: number, startedAt: number): Promise<ActionPreview> {

@@ -85,6 +85,8 @@ export interface StorageScanResult {
   fileCount: number;
   directoryCount: number;
   skippedCount: number;
+  cacheHit: boolean;
+  indexedAt: number;
 }
 
 export interface Finding {

@@ -4,7 +4,7 @@ import { SunburstChart, TreemapChart } from "echarts/charts";
 import { TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { ECharts, EChartsCoreOption } from "echarts/core";
-import { listStorageDirectory, scanStorageTree } from "./api";
+import { cancelStorageScan, listStorageDirectory, scanStorageTree } from "./api";
 import type { HardwareSnapshot, StorageEntry, StorageScanResult } from "./types";
 
 use([TreemapChart, SunburstChart, TooltipComponent, CanvasRenderer]);
@@ -77,7 +77,15 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
   const [resultExact, setResultExact] = useState(false);
   const [error, setError] = useState("");
   const scanGeneration = useRef(0);
+  const activeTask = useRef<string | null>(null);
+  const cancelActiveScan = useCallback(() => {
+    const taskId = activeTask.current;
+    activeTask.current = null;
+    if (taskId) void cancelStorageScan(taskId);
+  }, []);
+  useEffect(() => () => { cancelActiveScan(); }, [cancelActiveScan]);
   const browse = useCallback(async (path: string, force = false) => {
+    cancelActiveScan();
     const cached = directoryCache.get(path);
     if (!force && cached && Date.now() - cached.savedAt < SCAN_CACHE_MS) {
       setSelectedRoot(path); setResult(cached.result); setResultExact(false); setError(""); setScanning(false); return;
@@ -85,11 +93,11 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     const generation = ++scanGeneration.current;
     setSelectedRoot(path); setScanning(true); setError(""); setResult(null);
     try {
-      const listed = await listStorageDirectory(path);
+      const listed = await listStorageDirectory(path, force);
       if (generation === scanGeneration.current) { directoryCache.set(path, { savedAt: Date.now(), result: listed }); setResult(listed); setResultExact(false); }
     } catch (reason) { if (generation === scanGeneration.current) setError(String(reason)); }
     finally { if (generation === scanGeneration.current) setScanning(false); }
-  }, []);
+  }, [cancelActiveScan]);
   const parentPath = useMemo(() => {
     const normalized = selectedRoot.replace(/[\\/]+$/, "");
     const separator = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
@@ -103,8 +111,11 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
       setSelectedRoot(root); setResult(cached.result); setResultExact(true); setError(""); return;
     }
     const generation = ++scanGeneration.current;
+    cancelActiveScan();
+    const taskId = crypto.randomUUID();
+    activeTask.current = taskId;
     setSelectedRoot(root); setScanning(true); setError("");
-    setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0 });
+    setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0, cacheHit: false, indexedAt: Date.now() });
     let pending: StorageEntry[] = [];
     let flushTimer: number | undefined;
     const flush = () => {
@@ -118,15 +129,18 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
       });
     };
     try {
-      const completed = await scanStorageTree(root, entry => {
+      const completed = await scanStorageTree(root, taskId, force, entry => {
         if (generation !== scanGeneration.current) return;
         pending.push(entry);
         flushTimer ??= window.setTimeout(flush, 150);
       });
       if (flushTimer != null) window.clearTimeout(flushTimer);
       if (generation === scanGeneration.current) { scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); setResultExact(true); }
-    } catch (reason) { if (generation === scanGeneration.current) setError(String(reason)); }
-    finally { if (generation === scanGeneration.current) setScanning(false); }
+    } catch (reason) { if (generation === scanGeneration.current && !String(reason).includes("扫描已取消")) setError(String(reason)); }
+    finally {
+      if (activeTask.current === taskId) activeTask.current = null;
+      if (generation === scanGeneration.current) setScanning(false);
+    }
   };
   if (!disks.length) return <p className="empty">暂时没有读取到磁盘分区数据。</p>;
   return <>
@@ -140,12 +154,13 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     {error && <div className="storage-scan-prompt error"><b>读取失败</b><p>{error}</p><button onClick={() => void browse(selectedRoot, true)}>重新读取</button></div>}
     {result && (!scanning || result.root.children.length > 0) && <>
       {scanning && <div className="storage-progress-note"><span className="storage-spinner"/><span>正在逐项计算，已显示 {result.root.children.length} 个顶层项目；图表可立即使用。</span></div>}
+      {result.cacheHit && !scanning && <div className="storage-progress-note"><span>已复用 SQLite 目录索引；目录修改后会自动重新解析。</span></div>}
       <div className="storage-overview storage-scan-overview">
         <article><span>{resultExact ? "已统计容量" : "当前层文件大小"}</span><b>{formatBytes(result.root.sizeBytes)}</b></article><article><span>{resultExact ? "全部文件" : "当前层文件"}</span><b>{result.fileCount.toLocaleString()}</b></article>
         <article><span>{resultExact ? "全部文件夹" : "当前层文件夹"}</span><b>{result.directoryCount.toLocaleString()}</b></article><article><span>无权限/已跳过</span><b>{result.skippedCount.toLocaleString()}</b></article>
       </div>
       <section className="storage-chart-card"><div className="storage-chart-head"><div><h4>{selectedRoot} 文件占用</h4><small>文件大小立即显示；文件夹点击进入，精确占比需单独计算</small></div>
-        <div className="storage-chart-actions">{parentPath && <button className="storage-rescan" disabled={scanning} onClick={() => void browse(parentPath)}>返回上级</button>}<button className="storage-rescan" disabled={scanning} onClick={() => void scan(selectedRoot, true)}>精确计算当前目录</button><button className="storage-rescan" disabled={scanning} onClick={() => void browse(selectedRoot, true)}>刷新</button><div className="storage-chart-tabs" role="tablist"><button className={mode === "treemap" ? "active" : ""} onClick={() => setMode("treemap")}>矩形树图</button><button className={mode === "sunburst" ? "active" : ""} onClick={() => setMode("sunburst")}>旭日图</button></div></div>
+        <div className="storage-chart-actions">{parentPath && <button className="storage-rescan" disabled={scanning} onClick={() => void browse(parentPath)}>返回上级</button>}<button className="storage-rescan" disabled={scanning} onClick={() => void scan(selectedRoot)}>精确计算当前目录</button>{scanning && <button className="storage-rescan" onClick={cancelActiveScan}>取消扫描</button>}<button className="storage-rescan" disabled={scanning} onClick={() => void browse(selectedRoot, true)}>刷新</button><div className="storage-chart-tabs" role="tablist"><button className={mode === "treemap" ? "active" : ""} onClick={() => setMode("treemap")}>矩形树图</button><button className={mode === "sunburst" ? "active" : ""} onClick={() => setMode("sunburst")}>旭日图</button></div></div>
       </div><StorageChart root={result.root} mode={mode} onOpen={browse} /></section>
     </>}
   </>;

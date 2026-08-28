@@ -97,7 +97,15 @@ impl Storage {
                 status TEXT NOT NULL DEFAULT 'unread',
                 note TEXT NOT NULL DEFAULT ''
              );
-             CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(updated_at DESC);",
+             CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(updated_at DESC);
+             CREATE TABLE IF NOT EXISTS storage_directory_index (
+                path TEXT NOT NULL,
+                exact INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL,
+                indexed_at INTEGER NOT NULL,
+                result_json TEXT NOT NULL,
+                PRIMARY KEY(path, exact)
+             );",
             )
             .map_err(|error| format!("无法初始化本地记忆：{error}"))?;
         Ok(Self { connection })
@@ -357,7 +365,7 @@ impl Storage {
 
     pub fn clear_memory(&self) -> rusqlite::Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions; DELETE FROM application_snapshots; DELETE FROM alerts;",
+            "DELETE FROM system_snapshots; DELETE FROM domain_events; DELETE FROM action_audits; DELETE FROM app_sessions; DELETE FROM application_snapshots; DELETE FROM alerts; DELETE FROM storage_directory_index;",
         )
     }
 
