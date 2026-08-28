@@ -32,11 +32,16 @@ const dogPhrases: Record<DogMode, string[]> = {
 
 function DogCompanion({ mode, personality, quiet, reducedMotion, onDiagnose }: { mode: DogMode; personality: UserSettings["companionPersonality"]; quiet: boolean; reducedMotion: boolean; onDiagnose: () => void }) {
   const [bubble, setBubble] = useState("");
+  const [idleTrick, setIdleTrick] = useState<"" | "look" | "stretch">("");
+  const [petting, setPetting] = useState(false);
   const phraseIndex = useRef(0);
   const speak = useCallback(() => {
     const phrases = dogPhrases[mode];
     phraseIndex.current = (phraseIndex.current + 1) % phrases.length;
     setBubble(phrases[phraseIndex.current]);
+    setPetting(false);
+    window.requestAnimationFrame(() => setPetting(true));
+    window.setTimeout(() => setPetting(false), 900);
   }, [mode]);
   useEffect(() => {
     if (quiet || personality === "quiet") return;
@@ -45,9 +50,18 @@ function DogCompanion({ mode, personality, quiet, reducedMotion, onDiagnose }: {
     const timer = window.setTimeout(() => setBubble(""), personality === "playful" ? 4800 : 3500);
     return () => window.clearTimeout(timer);
   }, [mode, personality, quiet]);
-  return <div className={`dog-companion dog-${mode} ${reducedMotion ? "reduced" : ""}`}>
+  useEffect(() => {
+    if (mode !== "idle" || reducedMotion || quiet || personality === "quiet" || document.hidden) { setIdleTrick(""); return; }
+    const delay = personality === "playful" ? 5500 : 9500;
+    const timer = window.setInterval(() => {
+      setIdleTrick(current => current === "look" ? "stretch" : "look");
+      window.setTimeout(() => setIdleTrick(""), 1400);
+    }, delay);
+    return () => window.clearInterval(timer);
+  }, [mode, personality, quiet, reducedMotion]);
+  return <div className={`dog-companion dog-${mode} ${idleTrick ? `dog-${idleTrick}` : ""} ${petting ? "dog-petting" : ""} ${reducedMotion ? "reduced" : ""}`}>
     {bubble && <div className="dog-bubble" role="status">{bubble}</div>}
-    <button className="avatar" onClick={speak} onDoubleClick={onDiagnose} aria-label="和大黄互动，双击开始诊断" title="点击摸摸头 · 双击立即诊断"><span aria-hidden="true">🐕</span><i aria-hidden="true"/></button>
+    <button className="avatar" onClick={speak} onDoubleClick={onDiagnose} aria-label="和大黄互动，双击开始诊断" title="点击摸摸头 · 双击立即诊断"><span className="dog-face" aria-hidden="true">🐕</span><i aria-hidden="true"/><em className="dog-sparkles" aria-hidden="true"><b>♥</b><b>✦</b><b>🐾</b></em></button>
   </div>;
 }
 
@@ -325,6 +339,14 @@ export default function App() {
   }, [historyRange]);
 
   useEffect(() => { void Promise.all([getSettings(), getAiStatus()]).then(([nextSettings, ai]) => { setSettings(nextSettings); setAiConfigured(ai.configured); }).catch(() => undefined); }, []);
+
+  useEffect(() => {
+    if (!message) return;
+    const failed = /失败|错误|无法|异常|拒绝/.test(message);
+    setDogActivity(failed ? "error" : "success");
+    const timer = window.setTimeout(() => setDogActivity("idle"), 3500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
 
   useLayoutEffect(() => {
     if (selectedApp != null && appDetailScrollRef.current) {
@@ -739,8 +761,8 @@ export default function App() {
       </div>
     </nav>
 
-    {diagnosisOpen && <div className="modal-backdrop" onClick={() => !diagnosisLoading && setDiagnosisOpen(false)}><section className="modal report-modal diagnosis-modal" onClick={e => e.stopPropagation()}>
-      <div className="section-title"><div><span className="eyebrow">资源状态智能分析</span><h3>🐕 {diagnosis?.source === "minimax" ? "MiniMax AI 诊断" : diagnosis?.source === "local-fallback" ? "本地诊断（AI 已降级）" : "电脑卡顿诊断"}</h3></div><button className="modal-close" disabled={diagnosisLoading} onClick={() => setDiagnosisOpen(false)} aria-label="关闭诊断">×</button></div>
+    {diagnosisOpen && <div className="modal-backdrop" onClick={() => setDiagnosisOpen(false)}><section className="modal report-modal diagnosis-modal" onClick={e => e.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">资源状态智能分析</span><h3>🐕 {diagnosis?.source === "minimax" ? "MiniMax AI 诊断" : diagnosis?.source === "local-fallback" ? "本地诊断（AI 已降级）" : "电脑卡顿诊断"}</h3></div><button className="modal-close" onClick={() => setDiagnosisOpen(false)} aria-label={diagnosisLoading ? "关闭诊断，分析将在后台继续" : "关闭诊断"}>×</button></div>
       <div className="report-scroll">{diagnosisLoading ? <div className="diagnosis-loading"><span className="storage-spinner"/><b>大黄正在分析当前资源状态…</b><p>MiniMax 分析通常需要几秒钟。</p></div> : diagnosis && <div className="diagnosis diagnosis-dialog-content">
         <h2>{diagnosis.summary}</h2><div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
         <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · {diagnosis.source === "minimax" ? `由 ${diagnosis.model} 分析，仅发送资源摘要` : "使用本机规则分析"}</small>
