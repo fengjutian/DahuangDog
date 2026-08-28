@@ -305,6 +305,7 @@ export default function App() {
   const [cleanupSelection, setCleanupSelection] = useState<Set<string>>(() => new Set());
   const [cleanupFilter, setCleanupFilter] = useState("all");
   const [dogActivity, setDogActivity] = useState<DogMode>("idle");
+  const closeDiagnosis = useCallback(() => setDiagnosisOpen(false), []);
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -347,6 +348,13 @@ export default function App() {
     const timer = window.setTimeout(() => setDogActivity("idle"), 3500);
     return () => window.clearTimeout(timer);
   }, [message]);
+
+  useEffect(() => {
+    if (!diagnosisOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") closeDiagnosis(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [closeDiagnosis, diagnosisOpen]);
 
   useLayoutEffect(() => {
     if (selectedApp != null && appDetailScrollRef.current) {
@@ -761,8 +769,8 @@ export default function App() {
       </div>
     </nav>
 
-    {diagnosisOpen && <div className="modal-backdrop" onClick={() => setDiagnosisOpen(false)}><section className="modal report-modal diagnosis-modal" onClick={e => e.stopPropagation()}>
-      <div className="section-title"><div><span className="eyebrow">资源状态智能分析</span><h3>🐕 {diagnosis?.source === "minimax" ? "MiniMax AI 诊断" : diagnosis?.source === "local-fallback" ? "本地诊断（AI 已降级）" : "电脑卡顿诊断"}</h3></div><button className="modal-close" onClick={() => setDiagnosisOpen(false)} aria-label={diagnosisLoading ? "关闭诊断，分析将在后台继续" : "关闭诊断"}>×</button></div>
+    {diagnosisOpen && <div className="modal-backdrop" onPointerDown={closeDiagnosis}><section className="modal report-modal diagnosis-modal" onPointerDown={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">资源状态智能分析</span><h3>🐕 {diagnosis?.source === "minimax" ? "MiniMax AI 诊断" : diagnosis?.source === "local-fallback" ? "本地诊断（AI 已降级）" : "电脑卡顿诊断"}</h3></div><button type="button" className="modal-close diagnosis-close" onPointerDown={event => { event.stopPropagation(); closeDiagnosis(); }} onClick={closeDiagnosis} aria-label={diagnosisLoading ? "关闭诊断，分析将在后台继续" : "关闭诊断"}>×</button></div>
       <div className="report-scroll">{diagnosisLoading ? <div className="diagnosis-loading"><span className="storage-spinner"/><b>大黄正在分析当前资源状态…</b><p>MiniMax 分析通常需要几秒钟。</p></div> : diagnosis && <div className="diagnosis diagnosis-dialog-content">
         <h2>{diagnosis.summary}</h2><div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
         <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · {diagnosis.source === "minimax" ? `由 ${diagnosis.model} 分析，仅发送资源摘要` : "使用本机规则分析"}</small>
