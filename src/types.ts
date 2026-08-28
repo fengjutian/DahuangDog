@@ -72,6 +72,21 @@ export interface HardwareSnapshot {
   appNetworkStatus: string;
 }
 
+export interface StorageEntry {
+  name: string;
+  path: string;
+  sizeBytes: number;
+  kind: "file" | "directory" | "aggregate";
+  children: StorageEntry[];
+}
+
+export interface StorageScanResult {
+  root: StorageEntry;
+  fileCount: number;
+  directoryCount: number;
+  skippedCount: number;
+}
+
 export interface Finding {
   id: string;
   kind: string;

@@ -4,6 +4,7 @@ mod maintenance;
 mod network_etw;
 mod security;
 mod storage;
+mod storage_scan;
 mod types;
 
 use monitor::Monitor;
@@ -123,6 +124,13 @@ fn clear_minimax_api_key() -> Result<AiStatus, String> { ai::clear_api_key() }
 #[tauri::command]
 fn get_security_report() -> Result<SecurityReport, String> {
     security::scan_security()
+}
+
+#[tauri::command]
+async fn scan_storage_tree(root: String) -> Result<storage_scan::StorageScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || storage_scan::scan(root))
+        .await
+        .map_err(|error| format!("扫描任务异常结束：{error}"))?
 }
 
 #[tauri::command]
@@ -300,6 +308,7 @@ pub fn run() {
             save_minimax_api_key,
             clear_minimax_api_key,
             get_security_report,
+            scan_storage_tree,
             open_file_location,
             export_usage_csv,
             get_settings,

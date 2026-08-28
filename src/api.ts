@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, StorageScanResult, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -43,6 +43,11 @@ function isTauri(): boolean {
 
 export async function getCurrentStatus(): Promise<CurrentStatus> {
   return isTauri() ? invoke("get_current_status") : demoStatus;
+}
+
+export async function scanStorageTree(root: string): Promise<StorageScanResult> {
+  if (!isTauri()) throw new Error("浏览器预览模式无法扫描本机磁盘，请在桌面应用中使用");
+  return invoke("scan_storage_tree", { root });
 }
 
 export async function prepareTerminate(pid: number, startedAt: number): Promise<ActionPreview> {

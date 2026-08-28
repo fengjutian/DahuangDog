@@ -557,7 +557,7 @@ export default function App() {
     </section></div>}
     {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>
-      <p className="security-note">显示 Windows 当前挂载的每个磁盘分区。图表会随巡逻采样自动更新，不会扫描或读取文件内容。</p>
+      <p className="security-note">选择磁盘后会读取文件系统元数据，统计所有可访问文件与文件夹的大小；不会打开或读取文件内容。</p>
       <div className="report-scroll"><Suspense fallback={<p className="empty">正在整理磁盘数据…</p>}><StorageAnalysis disks={snap.hardware.disks} /></Suspense></div>
     </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
