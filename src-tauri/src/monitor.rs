@@ -100,6 +100,10 @@ fn build_application_groups(
                 network_bps: network_available.then_some(network_receive_bps.saturating_add(network_send_bps)),
                 network_receive_bps: network_available.then_some(network_receive_bps),
                 network_send_bps: network_available.then_some(network_send_bps),
+                product_name: None,
+                description: None,
+                publisher: None,
+                executable_path: root_process.executable_path.clone(),
                 root_process,
                 members,
             })
@@ -164,6 +168,60 @@ fn battery_metric() -> Option<BatteryMetric> {
         })
     }
 }
+
+#[derive(Clone, Default)]
+struct ApplicationMetadata {
+    product_name: Option<String>,
+    description: Option<String>,
+    publisher: Option<String>,
+}
+
+#[cfg(windows)]
+fn application_metadata(path: &str) -> ApplicationMetadata {
+    use std::{ffi::c_void, slice};
+    use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
+
+    unsafe fn query_string(data: &[u8], key: &str, translations: &[(u16, u16)]) -> Option<String> {
+        for &(language, codepage) in translations {
+            let query = format!(r"\StringFileInfo\{language:04x}{codepage:04x}\{key}")
+                .encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            let mut value: *mut c_void = std::ptr::null_mut();
+            let mut length = 0_u32;
+            if unsafe { VerQueryValueW(data.as_ptr().cast(), query.as_ptr(), &mut value, &mut length) } == 0 || value.is_null() || length <= 1 { continue; }
+            let text = String::from_utf16_lossy(unsafe { slice::from_raw_parts(value.cast::<u16>(), length as usize) })
+                .trim_end_matches('\0').trim().to_string();
+            if !text.is_empty() { return Some(text); }
+        }
+        None
+    }
+
+    let wide_path = path.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let mut ignored = 0_u32;
+    let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), &mut ignored) };
+    if size == 0 { return ApplicationMetadata::default(); }
+    let mut data = vec![0_u8; size as usize];
+    if unsafe { GetFileVersionInfoW(wide_path.as_ptr(), 0, size, data.as_mut_ptr().cast()) } == 0 { return ApplicationMetadata::default(); }
+
+    let translation_query = "\\VarFileInfo\\Translation\0".encode_utf16().collect::<Vec<_>>();
+    let mut translation_data: *mut c_void = std::ptr::null_mut();
+    let mut translation_length = 0_u32;
+    let mut translations = Vec::new();
+    if unsafe { VerQueryValueW(data.as_ptr().cast(), translation_query.as_ptr(), &mut translation_data, &mut translation_length) } != 0 && !translation_data.is_null() {
+        let bytes = unsafe { slice::from_raw_parts(translation_data.cast::<u8>(), translation_length as usize) };
+        for pair in bytes.chunks_exact(4) { translations.push((u16::from_le_bytes([pair[0], pair[1]]), u16::from_le_bytes([pair[2], pair[3]]))); }
+    }
+    for fallback in [(0x0804, 0x04b0), (0x0409, 0x04b0), (0x0409, 0x04e4)] {
+        if !translations.contains(&fallback) { translations.push(fallback); }
+    }
+    ApplicationMetadata {
+        product_name: unsafe { query_string(&data, "ProductName", &translations) },
+        description: unsafe { query_string(&data, "FileDescription", &translations) },
+        publisher: unsafe { query_string(&data, "CompanyName", &translations) },
+    }
+}
+
+#[cfg(not(windows))]
+fn application_metadata(_: &str) -> ApplicationMetadata { ApplicationMetadata::default() }
 
 fn gpu_metrics() -> (Vec<GpuMetric>, String) {
     #[cfg(windows)] use std::os::windows::process::CommandExt;
@@ -296,6 +354,7 @@ pub struct Monitor {
     last_lifecycle_tick: u64,
     last_patrol_at: u64,
     network_collector: NetworkCollector,
+    application_metadata: HashMap<String, ApplicationMetadata>,
 }
 
 impl Monitor {
@@ -334,6 +393,7 @@ impl Monitor {
             last_lifecycle_tick: now(),
             last_patrol_at: now(),
             network_collector: NetworkCollector::new(application_network_monitoring),
+            application_metadata: HashMap::new(),
         };
         if let Some(storage) = &monitor.storage {
             if let Ok(events) = storage.recent_events(50) {
@@ -382,6 +442,7 @@ impl Monitor {
                     handle_count: process.open_files(),
                     disk_read_bps: process.disk_usage().read_bytes / self.sampling_interval_seconds().max(1),
                     disk_write_bps: process.disk_usage().written_bytes / self.sampling_interval_seconds().max(1),
+                    executable_path: process.exe().map(|path| path.to_string_lossy().into_owned()),
                 }
             })
             .collect();
@@ -392,11 +453,18 @@ impl Monitor {
         });
         let app_network_status = self.network_collector.status();
         let network_rates = self.network_collector.rates(self.sampling_interval_seconds());
-        let all_applications = build_application_groups(
+        let mut all_applications = build_application_groups(
             &processes,
             &network_rates,
             app_network_status.state == "running",
         );
+        for application in &mut all_applications {
+            let Some(path) = application.executable_path.as_ref() else { continue };
+            let metadata = self.application_metadata.entry(path.clone()).or_insert_with(|| application_metadata(path));
+            application.product_name = metadata.product_name.clone();
+            application.description = metadata.description.clone();
+            application.publisher = metadata.publisher.clone();
+        }
         self.update_app_lifecycle(&all_applications);
         let applications = all_applications
             .into_iter()
@@ -1154,6 +1222,7 @@ impl Monitor {
             handle_count: process.open_files(),
             disk_read_bps: 0,
             disk_write_bps: 0,
+            executable_path: process.exe().map(|path| path.to_string_lossy().into_owned()),
         };
         let label = match level.as_str() {
             "belowNormal" => "低于正常",
@@ -1211,6 +1280,7 @@ impl Monitor {
             handle_count: process.open_files(),
             disk_read_bps: 0,
             disk_write_bps: 0,
+            executable_path: process.exe().map(|path| path.to_string_lossy().into_owned()),
         };
         let preview = ActionPreview {
             preview_id: Uuid::new_v4().to_string(),
@@ -1384,6 +1454,7 @@ mod tests {
             handle_count: Some(1),
             disk_read_bps: 0,
             disk_write_bps: 0,
+            executable_path: None,
         };
         let mut network_rates = HashMap::new();
         network_rates.insert(10, NetworkRate { receive_bps: 1_000, send_bps: 200 });

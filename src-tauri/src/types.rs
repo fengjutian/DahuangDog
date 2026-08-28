@@ -14,6 +14,7 @@ pub struct ProcessSample {
     pub handle_count: Option<usize>,
     pub disk_read_bps: u64,
     pub disk_write_bps: u64,
+    pub executable_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -29,6 +30,10 @@ pub struct ApplicationGroup {
     pub network_bps: Option<u64>,
     pub network_receive_bps: Option<u64>,
     pub network_send_bps: Option<u64>,
+    pub product_name: Option<String>,
+    pub description: Option<String>,
+    pub publisher: Option<String>,
+    pub executable_path: Option<String>,
     pub root_process: ProcessSample,
     pub members: Vec<ProcessSample>,
 }

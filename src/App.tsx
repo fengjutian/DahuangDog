@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
-import type { ActionPreview, AlertRecord, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
+import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -44,6 +44,28 @@ function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor(seconds % 3600 / 60);
   return `${hours} 小时 ${minutes} 分钟`;
+}
+
+const knownApplications: Record<string, { productName: string; description: string }> = {
+  "msedge.exe": { productName: "Microsoft Edge", description: "微软的 Chromium 浏览器，用于网页浏览、扩展和 Web 应用。多个进程分别负责标签页、GPU、网络与扩展。" },
+  "msedgewebview2.exe": { productName: "Microsoft Edge WebView2 Runtime", description: "为 Windows 桌面应用提供网页界面渲染能力，通常由其他应用在后台启动。" },
+  "code.exe": { productName: "Visual Studio Code", description: "微软开发的代码编辑器。多个进程通常分别负责窗口、扩展、终端和语言服务。" },
+  "feishu.exe": { productName: "飞书", description: "团队沟通与办公协作应用，包含消息、会议、文档和云端协作功能。" },
+  "wechatappex.exe": { productName: "微信辅助进程", description: "微信桌面版使用的应用与内容辅助进程，可能负责小程序、网页内容或独立窗口。" },
+  "weixin.exe": { productName: "微信", description: "腾讯微信桌面客户端，用于消息、通话、文件传输和小程序。" },
+  "termius.exe": { productName: "Termius", description: "SSH 与远程服务器管理客户端，用于终端连接、主机管理和文件传输。" },
+  "podman desktop.exe": { productName: "Podman Desktop", description: "容器与 Kubernetes 桌面管理工具，用于管理本地容器、镜像和开发环境。" },
+  "minimax code.exe": { productName: "MiniMax Code", description: "面向软件开发的代码工具与智能编程客户端。" }
+};
+
+function applicationPresentation(application: ApplicationGroup) {
+  const known = knownApplications[application.name.toLowerCase()];
+  const productName = application.productName?.trim() || known?.productName || application.name;
+  const fileDescription = application.description?.trim();
+  const description = fileDescription && ![application.name, productName].some(value => value.toLowerCase() === fileDescription.toLowerCase())
+    ? fileDescription
+    : known?.description || `这是由 ${application.name} 启动的 Windows 应用。程序文件没有提供更具体的用途说明。`;
+  return { productName, description };
 }
 
 function Metric({ label, value, tone, onClick }: { label: string; value: string; tone?: "warn"; onClick?: () => void }) {
@@ -109,6 +131,7 @@ export default function App() {
   const [selectedHistoryMetric, setSelectedHistoryMetric] = useState<HistoryMetricKey | null>(null);
   const [appHistory, setAppHistory] = useState<ApplicationHistory | null>(null);
   const [appHistoryRange, setAppHistoryRange] = useState(60);
+  const [appHistoryReturnApp, setAppHistoryReturnApp] = useState<number | null>(null);
   const [alerts, setAlerts] = useState<AlertRecord[] | null>(null);
   const [alertFilter, setAlertFilter] = useState("");
   const [patterns, setPatterns] = useState<PeriodicPattern[] | null>(null);
@@ -159,6 +182,14 @@ export default function App() {
     try { setAppHistoryRange(range); setAppHistory(await getApplicationHistory(name, range)); setSelected(null); setSelectedApp(null); }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
+  }
+
+  function closeApplicationHistory() {
+    setAppHistory(null);
+    if (appHistoryReturnApp != null) {
+      setSelectedApp(appHistoryReturnApp);
+      setAppHistoryReturnApp(null);
+    }
   }
 
   async function showAlerts(filter = alertFilter) {
@@ -300,6 +331,7 @@ export default function App() {
         || String(process.pid).includes(normalizedProcessQuery));
   }).slice(0, 8) ?? [];
   const appDetails = selectedApp == null ? null : snap?.applications.find(application => application.rootPid === selectedApp) ?? null;
+  const appDetailsPresentation = appDetails ? applicationPresentation(appDetails) : null;
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
@@ -346,18 +378,18 @@ export default function App() {
     <div className="columns">
       <section className="card"><div className="section-title"><h3>正在盯着</h3><span>应用总占用 · 点击展开子进程</span></div>
         <div className="process-search-wrap"><span aria-hidden="true">⌕</span><input className="process-search" value={processQuery} onChange={event => setProcessQuery(event.target.value)} placeholder="搜索应用、进程或 PID" aria-label="搜索应用、进程或 PID" />{processQuery && <button onClick={() => setProcessQuery("")} aria-label="清除进程搜索">×</button>}</div>
-        <div className="process-list">{visibleApplications.map(app => <div className="app-group" key={`${app.rootPid}-${app.name}`}>
+        <div className="process-list">{visibleApplications.map(app => { const presentation = applicationPresentation(app); return <div className="app-group" key={`${app.rootPid}-${app.name}`}>
           <div className="process application app-summary-row">
             <button className="process-expand" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)} aria-label={expandedApp === app.rootPid ? `收起 ${app.name} 进程` : `展开 ${app.name} 进程`}>{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</button>
             <button className="app-detail-trigger" onClick={() => setSelectedApp(app.rootPid)}>
-              <span className="process-name"><b>{app.name}</b><small>{app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
+              <span className="process-name"><b>{presentation.productName}</b><small>{app.name} · {app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
               <span className="process-summary"><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
             </button>
           </div>
           {expandedApp === app.rootPid && <div className="child-processes">{app.members.map(process => <button className="process child" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
             <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""} · {process.threadCount ?? 0} 线程</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
           </button>)}</div>}
-        </div>)}{!visibleApplications.length && <p className="empty">{normalizedProcessQuery ? "没有找到匹配的应用或进程。" : "还没有采集到应用数据。"}</p>}</div>
+        </div>})}{!visibleApplications.length && <p className="empty">{normalizedProcessQuery ? "没有找到匹配的应用或进程。" : "还没有采集到应用数据。"}</p>}</div>
       </section>
 
       <section className="card"><div className="section-title"><h3>🐾 巡逻记录</h3><div className="timeline-title-actions"><span>最近事件</span>{status.timeline.length > 8 && <button onClick={() => setTimelineOpen(true)}>查看全部 {status.timeline.length} 条</button>}</div></div>
@@ -378,14 +410,15 @@ export default function App() {
       <div className="section-title"><div><span className="eyebrow">本地保存的最近事件</span><h3>🐾 全部巡逻记录</h3></div><button className="modal-close" onClick={() => setTimelineOpen(false)} aria-label="关闭巡逻记录">×</button></div>
       <div className="report-scroll"><ol className="timeline timeline-full">{status.timeline.map(item => <li key={item.id} className={`timeline-${item.kind}`}><time>{new Date(item.occurredAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><div><b>{timelineKindLabel[item.kind] ?? "事件"}</b><span>{item.message}</span></div></li>)}</ol>{!status.timeline.length && <p className="empty">还没有巡逻记录。</p>}</div>
     </section></div>}
-    {appHistory && <div className="modal-backdrop" onClick={() => setAppHistory(null)}><section className="modal report-modal app-history-report" onClick={event => event.stopPropagation()}>
-      <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={() => setAppHistory(null)} aria-label="关闭应用历史">×</button></div>
+    {appHistory && <div className="modal-backdrop" onClick={closeApplicationHistory}><section className="modal report-modal app-history-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={closeApplicationHistory} aria-label={appHistoryReturnApp == null ? "关闭应用历史" : "返回应用详情"} title={appHistoryReturnApp == null ? "关闭" : "返回应用详情"}>{appHistoryReturnApp == null ? "×" : "←"}</button></div>
       <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([range,label]) => <button className={appHistoryRange === range ? "active" : ""} key={range} onClick={() => void showApplicationHistory(appHistory.name, Number(range))}>{label}</button>)}</div>
       <div className="report-scroll"><div className="app-history-charts">{([['cpuPercent','CPU'],['memoryBytes','内存'],['diskReadBps','磁盘读取'],['diskWriteBps','磁盘写入']] as const).map(([key,label]) => <article key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d={appLinePath(appHistory,key)} /></svg><small>{appHistory.points.length} 个采样点</small></article>)}</div>{!appHistory.points.length && <p className="empty">该应用在所选范围内还没有历史数据，保持运行一会儿后会自动积累。</p>}</div>
     </section></div>}
-    {appDetails && <div className="modal-backdrop" onClick={() => setSelectedApp(null)}><section className="modal report-modal app-detail-report" onClick={event => event.stopPropagation()}>
-      <div className="section-title"><div><span className="eyebrow">应用实时详情</span><h3>{appDetails.name}</h3></div><button className="modal-close" onClick={() => setSelectedApp(null)} aria-label="关闭应用详情">×</button></div>
+    {appDetails && appDetailsPresentation && <div className="modal-backdrop" onClick={() => setSelectedApp(null)}><section className="modal report-modal app-detail-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">应用实时详情 · {appDetails.name}</span><h3>{appDetailsPresentation.productName}</h3></div><button className="modal-close" onClick={() => setSelectedApp(null)} aria-label="关闭应用详情">×</button></div>
       <div className="report-scroll">
+        <div className="app-detail-intro"><p>{appDetailsPresentation.description}</p><div><span>发布者 <b>{appDetails.publisher || "程序文件未提供"}</b></span><span>程序位置 <code title={appDetails.executablePath || ""}>{appDetails.executablePath || "当前权限无法读取"}</code></span></div></div>
         <div className="app-detail-summary">
           <article><span>CPU 总占用</span><b>{appDetails.cpuPercent.toFixed(1)}%</b></article>
           <article><span>内存总占用</span><b>{formatBytes(appDetails.memoryBytes)}</b></article>
@@ -396,7 +429,7 @@ export default function App() {
           <article><span>进程 / 线程</span><b>{appDetails.memberCount} / {appDetails.members.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}</b></article>
           <article><span>句柄总数</span><b>{appDetails.members.reduce((sum, process) => sum + (process.handleCount ?? 0), 0)}</b></article>
         </div>
-        <div className="app-detail-identity"><span>根进程 PID <b>{appDetails.rootPid}</b></span><span>启动于 <b>{new Date(appDetails.rootProcess.startedAt * 1000).toLocaleString("zh-CN")}</b></span><span>{appDetails.rootProcess.isCritical ? "Windows 关键进程" : "普通应用进程"}</span><button onClick={() => void showApplicationHistory(appDetails.name)}>查看历史曲线</button></div>
+        <div className="app-detail-identity"><span>根进程 PID <b>{appDetails.rootPid}</b></span><span>启动于 <b>{new Date(appDetails.rootProcess.startedAt * 1000).toLocaleString("zh-CN")}</b></span><span>{appDetails.rootProcess.isCritical ? "Windows 关键进程" : "普通应用进程"}</span><button onClick={() => { setAppHistoryReturnApp(appDetails.rootPid); void showApplicationHistory(appDetails.name); }}>查看历史曲线</button></div>
         <div className="app-process-detail-head"><h4>包含的进程</h4><span>点击进程可查看更多操作</span></div>
         <div className="app-process-detail-list">
           <div className="app-process-detail-row head"><b>进程</b><b>PID</b><b>CPU</b><b>内存</b><b>磁盘读 / 写</b><b>线程 / 句柄</b></div>
@@ -496,7 +529,7 @@ export default function App() {
     </section></div>}
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal process-actions-modal" onClick={e => e.stopPropagation()}>
       <span className="risk">进程操作</span><h3>{selected.name}</h3><p>PID {selected.pid} · CPU {selected.cpuPercent.toFixed(1)}% · {formatBytes(selected.memoryBytes)}</p>
-      <div className="process-action-list"><button onClick={() => void showApplicationHistory(selected.name)}>📈 查看历史曲线 <small>只读操作</small></button><button onClick={() => reveal(selected)}>📂 打开文件位置 <small>只读操作</small></button><button onClick={() => requestPriority(selected, "belowNormal")}>⬇ 调低优先级 <small>需要确认</small></button><button onClick={() => requestPriority(selected, "normal")}>↔ 恢复正常优先级 <small>需要确认</small></button><button className="danger-row" onClick={() => requestTerminate(selected)}>结束进程 <small>可能丢失未保存内容</small></button></div>
+      <div className="process-action-list"><button onClick={() => { setAppHistoryReturnApp(null); void showApplicationHistory(selected.name); }}>📈 查看历史曲线 <small>只读操作</small></button><button onClick={() => reveal(selected)}>📂 打开文件位置 <small>只读操作</small></button><button onClick={() => requestPriority(selected, "belowNormal")}>⬇ 调低优先级 <small>需要确认</small></button><button onClick={() => requestPriority(selected, "normal")}>↔ 恢复正常优先级 <small>需要确认</small></button><button className="danger-row" onClick={() => requestTerminate(selected)}>结束进程 <small>可能丢失未保存内容</small></button></div>
       <div className="actions"><button className="secondary" onClick={() => setSelected(null)}>取消</button></div>
     </section></div>}
     <nav className="bottom-menu" aria-label="底部菜单">

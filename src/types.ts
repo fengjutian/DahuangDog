@@ -19,6 +19,7 @@ export interface ProcessSample {
   handleCount?: number | null;
   diskReadBps?: number;
   diskWriteBps?: number;
+  executablePath?: string | null;
 }
 
 export interface ApplicationGroup {
@@ -32,6 +33,10 @@ export interface ApplicationGroup {
   networkBps?: number | null;
   networkReceiveBps?: number | null;
   networkSendBps?: number | null;
+  productName?: string | null;
+  description?: string | null;
+  publisher?: string | null;
+  executablePath?: string | null;
   rootProcess: ProcessSample;
   members: ProcessSample[];
 }
