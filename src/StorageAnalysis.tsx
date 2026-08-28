@@ -63,8 +63,13 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
   const scan = async (root: string) => {
-    setSelectedRoot(root); setScanning(true); setError(""); setResult(null);
-    try { setResult(await scanStorageTree(root)); }
+    setSelectedRoot(root); setScanning(true); setError("");
+    setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0 });
+    try { setResult(await scanStorageTree(root, entry => setResult(current => {
+      if (!current || current.root.path !== root) return current;
+      const children = [...current.root.children, entry].sort((a, b) => b.sizeBytes - a.sizeBytes);
+      return { ...current, root: { ...current.root, children, sizeBytes: children.reduce((sum, item) => sum + item.sizeBytes, 0) } };
+    }))); }
     catch (reason) { setError(String(reason)); }
     finally { setScanning(false); }
   };
@@ -76,9 +81,10 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
       </button>)}
     </div>
     {!result && !scanning && !error && <div className="storage-scan-prompt"><b>选择一个磁盘开始分析</b><p>将递归读取文件与文件夹的大小。扫描时间取决于文件数量，受保护的项目会自动跳过。</p></div>}
-    {scanning && <div className="storage-scan-prompt scanning"><span className="storage-spinner"/><b>正在扫描 {selectedRoot}</b><p>正在统计所有可访问文件，请保持窗口开启。这可能需要几分钟。</p></div>}
+    {scanning && !result?.root.children.length && <div className="storage-scan-prompt scanning"><span className="storage-spinner"/><b>正在读取 {selectedRoot} 第一层</b><p>每完成一个文件或文件夹就会立即显示，不必等待整个磁盘完成。</p></div>}
     {error && <div className="storage-scan-prompt error"><b>扫描失败</b><p>{error}</p><button onClick={() => void scan(selectedRoot)}>重新扫描</button></div>}
-    {result && <>
+    {result && (!scanning || result.root.children.length > 0) && <>
+      {scanning && <div className="storage-progress-note"><span className="storage-spinner"/><span>正在逐项计算，已显示 {result.root.children.length} 个顶层项目；图表可立即使用。</span></div>}
       <div className="storage-overview storage-scan-overview">
         <article><span>已统计容量</span><b>{formatBytes(result.root.sizeBytes)}</b></article><article><span>文件</span><b>{result.fileCount.toLocaleString()}</b></article>
         <article><span>文件夹</span><b>{result.directoryCount.toLocaleString()}</b></article><article><span>无权限/已跳过</span><b>{result.skippedCount.toLocaleString()}</b></article>

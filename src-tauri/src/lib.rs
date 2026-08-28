@@ -127,8 +127,8 @@ fn get_security_report() -> Result<SecurityReport, String> {
 }
 
 #[tauri::command]
-async fn scan_storage_tree(root: String) -> Result<storage_scan::StorageScanResult, String> {
-    tauri::async_runtime::spawn_blocking(move || storage_scan::scan(root))
+async fn scan_storage_tree(root: String, on_entry: tauri::ipc::Channel<storage_scan::StorageEntry>) -> Result<storage_scan::StorageScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || storage_scan::scan_progressive(root, |entry| { let _ = on_entry.send(entry); }))
         .await
         .map_err(|error| format!("扫描任务异常结束：{error}"))?
 }

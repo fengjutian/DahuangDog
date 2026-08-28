@@ -4,7 +4,7 @@ use std::{cmp::Reverse, fs, path::{Path, PathBuf}};
 const MAX_DEPTH: usize = 64;
 const MAX_VISIBLE_CHILDREN: usize = 160;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageEntry {
     pub name: String,
@@ -61,12 +61,28 @@ fn scan_entry(path: &Path, depth: usize, stats: &mut ScanStats) -> Option<Storag
     Some(StorageEntry { name: display_name(path), path: path.display().to_string(), size_bytes, kind: "directory", children })
 }
 
-pub fn scan(root: String) -> Result<StorageScanResult, String> {
+pub fn scan_progressive<F>(root: String, mut on_entry: F) -> Result<StorageScanResult, String>
+where F: FnMut(StorageEntry) {
     let path = PathBuf::from(&root);
     if !path.is_absolute() || !path.exists() || !path.is_dir() {
         return Err("请选择一个存在的磁盘根目录".into());
     }
     let mut stats = ScanStats::default();
-    let root = scan_entry(&path, 0, &mut stats).ok_or_else(|| "无法读取该磁盘".to_string())?;
+    stats.directories += 1;
+    let read_dir = fs::read_dir(&path).map_err(|error| format!("无法读取该目录：{error}"))?;
+    let mut children = Vec::new();
+    for item in read_dir {
+        let entry = match item {
+            Ok(item) => scan_entry(&item.path(), 1, &mut stats),
+            Err(_) => { stats.skipped += 1; None }
+        };
+        if let Some(entry) = entry {
+            on_entry(entry.clone());
+            children.push(entry);
+        }
+    }
+    children.sort_unstable_by_key(|child| Reverse(child.size_bytes));
+    let size_bytes = children.iter().map(|entry| entry.size_bytes).sum();
+    let root = StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory", children };
     Ok(StorageScanResult { root, file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped })
 }
