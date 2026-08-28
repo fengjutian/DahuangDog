@@ -14,13 +14,21 @@ fn validate_api_key(key: &str) -> Result<(), String> {
     if key.len() < 16 || key.len() > 2_500 { Err("MiniMax API Key 格式不正确".into()) } else { Ok(()) }
 }
 
+fn normalize_api_key(value: &str) -> Result<String, String> {
+    let mut key = value.trim().trim_matches(|character| character == '"' || character == '\'').trim();
+    if key.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer ")) { key = key.get(7..).unwrap_or_default().trim(); }
+    validate_api_key(key)?;
+    if key.chars().any(char::is_whitespace) { return Err("API Key 中包含空格或换行，请只粘贴密钥本身".into()); }
+    Ok(key.to_string())
+}
+
 #[cfg(windows)]
 fn wide(value: &str) -> Vec<u16> { value.encode_utf16().chain(Some(0)).collect() }
 
 #[cfg(windows)]
 pub fn save_api_key(api_key: &str) -> Result<AiStatus, String> {
     use windows_sys::Win32::Security::Credentials::{CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC};
-    let key = api_key.trim();
+    let key = normalize_api_key(api_key)?;
     if key.len() < 16 || key.len() > 2_500 { return Err("MiniMax API Key 格式不正确".into()); }
     let mut target = wide(CREDENTIAL_TARGET);
     let mut username = wide("MiniMax API");
@@ -87,7 +95,7 @@ pub fn test_connection(model: &str, api_key: Option<String>) -> Result<String, S
         Some(value) => value,
         None => read_api_key()?,
     };
-    validate_api_key(&key)?;
+    let key = normalize_api_key(&key)?;
     let response = reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build()
         .map_err(|_| "无法初始化 MiniMax 网络客户端".to_string())?
         .post(ENDPOINT).bearer_auth(key).json(&json!({
@@ -99,6 +107,9 @@ pub fn test_connection(model: &str, api_key: Option<String>) -> Result<String, S
     if !status.is_success() {
         let message = payload.pointer("/base_resp/status_msg").and_then(Value::as_str)
             .or_else(|| payload.pointer("/error/message").and_then(Value::as_str)).unwrap_or("请求失败");
+        if status.as_u16() == 401 && (message.contains("Authorization") || message.contains("1004")) {
+            return Err("MiniMax 未识别 API Key。请只粘贴密钥本身（不要包含 Bearer 或引号），并确认它来自 platform.minimax.io 的 API Keys 页面。".into());
+        }
         return Err(format!("MiniMax 请求失败（HTTP {status}）：{message}"));
     }
     let reply = payload.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("连接成功");
@@ -114,7 +125,7 @@ fn response_json(content: &str) -> Result<Value, String> {
 
 pub fn diagnose(model: &str, context: Value) -> Result<LocalDiagnosis, String> {
     validate_model(model)?;
-    let api_key = read_api_key()?;
+    let api_key = normalize_api_key(&read_api_key()?)?;
     let body = json!({
         "model": model,
         "stream": false,
@@ -164,5 +175,11 @@ mod tests {
     fn model_allowlist_rejects_unexpected_values() {
         assert!(validate_model("MiniMax-M2.7").is_ok());
         assert!(validate_model("custom-model").is_err());
+    }
+
+    #[test]
+    fn normalizes_pasted_bearer_prefix_and_quotes() {
+        assert_eq!(normalize_api_key("  \"Bearer sk-test-1234567890\"  ").unwrap(), "sk-test-1234567890");
+        assert!(normalize_api_key("sk-test 1234567890").is_err());
     }
 }
