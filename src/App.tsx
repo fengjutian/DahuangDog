@@ -94,6 +94,7 @@ export default function App() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
+  const [selectedApp, setSelectedApp] = useState<number | null>(null);
   const [usage, setUsage] = useState<AppUsageRecord[] | null>(null);
   const [usageSummary, setUsageSummary] = useState<AppUsageSummary | null>(null);
   const [usageQuery, setUsageQuery] = useState("");
@@ -155,7 +156,7 @@ export default function App() {
 
   async function showApplicationHistory(name: string, range = appHistoryRange) {
     setBusy(true);
-    try { setAppHistoryRange(range); setAppHistory(await getApplicationHistory(name, range)); setSelected(null); }
+    try { setAppHistoryRange(range); setAppHistory(await getApplicationHistory(name, range)); setSelected(null); setSelectedApp(null); }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   }
@@ -298,6 +299,7 @@ export default function App() {
       || application.members.some(process => process.name.toLowerCase().includes(normalizedProcessQuery)
         || String(process.pid).includes(normalizedProcessQuery));
   }).slice(0, 8) ?? [];
+  const appDetails = selectedApp == null ? null : snap?.applications.find(application => application.rootPid === selectedApp) ?? null;
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
@@ -345,10 +347,13 @@ export default function App() {
       <section className="card"><div className="section-title"><h3>正在盯着</h3><span>应用总占用 · 点击展开子进程</span></div>
         <div className="process-search-wrap"><span aria-hidden="true">⌕</span><input className="process-search" value={processQuery} onChange={event => setProcessQuery(event.target.value)} placeholder="搜索应用、进程或 PID" aria-label="搜索应用、进程或 PID" />{processQuery && <button onClick={() => setProcessQuery("")} aria-label="清除进程搜索">×</button>}</div>
         <div className="process-list">{visibleApplications.map(app => <div className="app-group" key={`${app.rootPid}-${app.name}`}>
-          <button className="process application" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)}>
-            <span className="process-icon">{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</span><span className="process-name"><b>{app.name}</b><small>{app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
-            <span><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
-          </button>
+          <div className="process application app-summary-row">
+            <button className="process-expand" onClick={() => setExpandedApp(expandedApp === app.rootPid ? null : app.rootPid)} aria-label={expandedApp === app.rootPid ? `收起 ${app.name} 进程` : `展开 ${app.name} 进程`}>{app.rootProcess.isCritical ? "🛡️" : expandedApp === app.rootPid ? "▾" : "▸"}</button>
+            <button className="app-detail-trigger" onClick={() => setSelectedApp(app.rootPid)}>
+              <span className="process-name"><b>{app.name}</b><small>{app.memberCount} 个进程 · 主 PID {app.rootPid}</small></span>
+              <span className="process-summary"><b>{app.cpuPercent.toFixed(1)}%</b><small>{formatBytes(app.memoryBytes)}</small></span>
+            </button>
+          </div>
           {expandedApp === app.rootPid && <div className="child-processes">{app.members.map(process => <button className="process child" key={`${process.pid}-${process.startedAt}`} onClick={() => inspect(process)}>
             <span className="process-icon">└</span><span className="process-name"><b>{process.pid === app.rootPid ? "主进程" : "子进程"}</b><small>PID {process.pid}{process.parentPid ? ` · 父 PID ${process.parentPid}` : ""} · {process.threadCount ?? 0} 线程</small></span><span><b>{process.cpuPercent.toFixed(1)}%</b><small>{formatBytes(process.memoryBytes)}</small></span>
           </button>)}</div>}
@@ -377,6 +382,29 @@ export default function App() {
       <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={() => setAppHistory(null)} aria-label="关闭应用历史">×</button></div>
       <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([range,label]) => <button className={appHistoryRange === range ? "active" : ""} key={range} onClick={() => void showApplicationHistory(appHistory.name, Number(range))}>{label}</button>)}</div>
       <div className="report-scroll"><div className="app-history-charts">{([['cpuPercent','CPU'],['memoryBytes','内存'],['diskReadBps','磁盘读取'],['diskWriteBps','磁盘写入']] as const).map(([key,label]) => <article key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d={appLinePath(appHistory,key)} /></svg><small>{appHistory.points.length} 个采样点</small></article>)}</div>{!appHistory.points.length && <p className="empty">该应用在所选范围内还没有历史数据，保持运行一会儿后会自动积累。</p>}</div>
+    </section></div>}
+    {appDetails && <div className="modal-backdrop" onClick={() => setSelectedApp(null)}><section className="modal report-modal app-detail-report" onClick={event => event.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">应用实时详情</span><h3>{appDetails.name}</h3></div><button className="modal-close" onClick={() => setSelectedApp(null)} aria-label="关闭应用详情">×</button></div>
+      <div className="report-scroll">
+        <div className="app-detail-summary">
+          <article><span>CPU 总占用</span><b>{appDetails.cpuPercent.toFixed(1)}%</b></article>
+          <article><span>内存总占用</span><b>{formatBytes(appDetails.memoryBytes)}</b></article>
+          <article><span>磁盘读取</span><b>{formatRate(appDetails.diskReadBps ?? 0)}</b></article>
+          <article><span>磁盘写入</span><b>{formatRate(appDetails.diskWriteBps ?? 0)}</b></article>
+          <article><span>网络下载</span><b>{appDetails.networkReceiveBps == null ? "--" : formatRate(appDetails.networkReceiveBps)}</b></article>
+          <article><span>网络上传</span><b>{appDetails.networkSendBps == null ? "--" : formatRate(appDetails.networkSendBps)}</b></article>
+          <article><span>进程 / 线程</span><b>{appDetails.memberCount} / {appDetails.members.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}</b></article>
+          <article><span>句柄总数</span><b>{appDetails.members.reduce((sum, process) => sum + (process.handleCount ?? 0), 0)}</b></article>
+        </div>
+        <div className="app-detail-identity"><span>根进程 PID <b>{appDetails.rootPid}</b></span><span>启动于 <b>{new Date(appDetails.rootProcess.startedAt * 1000).toLocaleString("zh-CN")}</b></span><span>{appDetails.rootProcess.isCritical ? "Windows 关键进程" : "普通应用进程"}</span><button onClick={() => void showApplicationHistory(appDetails.name)}>查看历史曲线</button></div>
+        <div className="app-process-detail-head"><h4>包含的进程</h4><span>点击进程可查看更多操作</span></div>
+        <div className="app-process-detail-list">
+          <div className="app-process-detail-row head"><b>进程</b><b>PID</b><b>CPU</b><b>内存</b><b>磁盘读 / 写</b><b>线程 / 句柄</b></div>
+          {appDetails.members.map(process => <button className="app-process-detail-row" key={`${process.pid}-${process.startedAt}`} onClick={() => { setSelectedApp(null); void inspect(process); }}>
+            <span title={process.name}>{process.name}</span><span>{process.pid}</span><span>{process.cpuPercent.toFixed(1)}%</span><span>{formatBytes(process.memoryBytes)}</span><span>{formatRate(process.diskReadBps ?? 0)} / {formatRate(process.diskWriteBps ?? 0)}</span><span>{process.threadCount ?? 0} / {process.handleCount ?? "--"}</span>
+          </button>)}
+        </div>
+      </div>
     </section></div>}
     {alerts && <div className="modal-backdrop" onClick={() => setAlerts(null)}><section className="modal report-modal alert-center" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">持久化处理记录</span><h3>🔔 告警中心</h3></div><button className="modal-close" onClick={() => setAlerts(null)} aria-label="关闭告警中心">×</button></div>
