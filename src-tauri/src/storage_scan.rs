@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::{cmp::Reverse, fs, path::{Path, PathBuf}};
+use std::{cmp::Reverse, fs, path::{Path, PathBuf}, sync::{atomic::{AtomicUsize, Ordering}, mpsc}, thread};
 
 const MAX_DEPTH: usize = 64;
 const MAX_VISIBLE_CHILDREN: usize = 160;
@@ -70,17 +70,37 @@ where F: FnMut(StorageEntry) {
     let mut stats = ScanStats::default();
     stats.directories += 1;
     let read_dir = fs::read_dir(&path).map_err(|error| format!("无法读取该目录：{error}"))?;
-    let mut children = Vec::new();
+    let mut paths = Vec::new();
     for item in read_dir {
-        let entry = match item {
-            Ok(item) => scan_entry(&item.path(), 1, &mut stats),
-            Err(_) => { stats.skipped += 1; None }
-        };
-        if let Some(entry) = entry {
+        match item { Ok(item) => paths.push(item.path()), Err(_) => stats.skipped += 1 }
+    }
+    let mut children = Vec::new();
+    let worker_count = thread::available_parallelism().map(usize::from).unwrap_or(2).clamp(2, 6).min(paths.len().max(1));
+    let next = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let paths = &paths;
+            let next = &next;
+            scope.spawn(move || loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(path) = paths.get(index) else { break };
+                let mut child_stats = ScanStats::default();
+                if let Some(entry) = scan_entry(path, 1, &mut child_stats) {
+                    if sender.send((entry, child_stats)).is_err() { break; }
+                }
+            });
+        }
+        drop(sender);
+        for (entry, child_stats) in receiver {
+            stats.files += child_stats.files;
+            stats.directories += child_stats.directories;
+            stats.skipped += child_stats.skipped;
             on_entry(entry.clone());
             children.push(entry);
         }
-    }
+    });
     children.sort_unstable_by_key(|child| Reverse(child.size_bytes));
     let size_bytes = children.iter().map(|entry| entry.size_bytes).sum();
     let root = StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory", children };

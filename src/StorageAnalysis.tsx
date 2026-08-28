@@ -10,6 +10,8 @@ import type { HardwareSnapshot, StorageEntry, StorageScanResult } from "./types"
 use([TreemapChart, SunburstChart, TooltipComponent, CanvasRenderer]);
 type DiskMetric = HardwareSnapshot["disks"][number];
 type ChartMode = "treemap" | "sunburst";
+const scanCache = new Map<string, { savedAt: number; result: StorageScanResult }>();
+const SCAN_CACHE_MS = 5 * 60 * 1000;
 
 function diskTitle(disk: DiskMetric): string {
   const mount = disk.mountPoint.trim(), name = disk.name.trim();
@@ -62,14 +64,18 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
   const [result, setResult] = useState<StorageScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
-  const scan = async (root: string) => {
+  const scan = async (root: string, force = false) => {
+    const cached = scanCache.get(root);
+    if (!force && cached && Date.now() - cached.savedAt < SCAN_CACHE_MS) {
+      setSelectedRoot(root); setResult(cached.result); setError(""); return;
+    }
     setSelectedRoot(root); setScanning(true); setError("");
     setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0 });
-    try { setResult(await scanStorageTree(root, entry => setResult(current => {
+    try { const completed = await scanStorageTree(root, entry => setResult(current => {
       if (!current || current.root.path !== root) return current;
       const children = [...current.root.children, entry].sort((a, b) => b.sizeBytes - a.sizeBytes);
       return { ...current, root: { ...current.root, children, sizeBytes: children.reduce((sum, item) => sum + item.sizeBytes, 0) } };
-    }))); }
+    })); scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); }
     catch (reason) { setError(String(reason)); }
     finally { setScanning(false); }
   };
@@ -90,7 +96,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
         <article><span>文件夹</span><b>{result.directoryCount.toLocaleString()}</b></article><article><span>无权限/已跳过</span><b>{result.skippedCount.toLocaleString()}</b></article>
       </div>
       <section className="storage-chart-card"><div className="storage-chart-head"><div><h4>{selectedRoot} 文件占用</h4><small>单击区域可下钻，点击底部路径可返回上级</small></div>
-        <div className="storage-chart-tabs" role="tablist"><button className={mode === "treemap" ? "active" : ""} onClick={() => setMode("treemap")}>矩形树图</button><button className={mode === "sunburst" ? "active" : ""} onClick={() => setMode("sunburst")}>旭日图</button></div>
+        <div className="storage-chart-actions"><button className="storage-rescan" disabled={scanning} onClick={() => void scan(selectedRoot, true)}>重新扫描</button><div className="storage-chart-tabs" role="tablist"><button className={mode === "treemap" ? "active" : ""} onClick={() => setMode("treemap")}>矩形树图</button><button className={mode === "sunburst" ? "active" : ""} onClick={() => setMode("sunburst")}>旭日图</button></div></div>
       </div><StorageChart root={result.root} mode={mode} /></section>
     </>}
   </>;
