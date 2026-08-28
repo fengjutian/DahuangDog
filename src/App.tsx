@@ -83,16 +83,80 @@ function linePath(points: MetricPoint[], key: "cpuPercent" | "memoryPercent" | "
   }).join(" ");
 }
 
-function appLinePath(history: ApplicationHistory, key: "cpuPercent" | "memoryBytes" | "diskReadBps" | "diskWriteBps"): string {
+type SystemMetricKey = "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps";
+
+function formatSystemAxisValue(key: SystemMetricKey, value: number): string {
+  return key === "cpuPercent" || key === "memoryPercent" ? `${value.toFixed(0)}%` : formatRate(value);
+}
+
+function SystemHistoryChart({ history, range, metric, label, style }: { history: HistorySummary; range: number; metric: SystemMetricKey; label: string; style: string }) {
+  const peak = metric === "cpuPercent" || metric === "memoryPercent" ? 100 : Math.max(...history.points.map(point => point[metric]), 1);
+  const first = history.points.at(0)?.capturedAt;
+  const middle = history.points.at(Math.floor((history.points.length - 1) / 2))?.capturedAt;
+  const last = history.points.at(-1)?.capturedAt;
+  return <div className="mini-trend">
+    <b>{label}</b>
+    <div className="app-chart-layout system-chart-layout">
+      <div className="app-chart-y-axis"><span>{formatSystemAxisValue(metric, peak)}</span><span>{formatSystemAxisValue(metric, peak / 2)}</span><span>{formatSystemAxisValue(metric, 0)}</span></div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={`${label}资源趋势`}><path className="app-chart-grid" d="M0,0 H100 M0,50 H100 M0,100 H100 M0,0 V100 M50,0 V100 M100,0 V100"/><path className={style} d={linePath(history.points, metric)}/></svg>
+      <div className="app-chart-x-axis"><time>{first == null ? "--" : formatApplicationAxisTime(first, range)}</time><time>{middle == null ? "--" : formatApplicationAxisTime(middle, range)}</time><time>{last == null ? "--" : formatApplicationAxisTime(last, range)}</time></div>
+    </div>
+  </div>;
+}
+
+function DailyUsageChart({ days }: { days: AppUsageSummary["dailyUsage"] }) {
+  const peak = Math.max(...days.map(item => item.foregroundSeconds), 1);
+  return <div className="daily-usage-chart">
+    <div className="daily-usage-y-axis"><span>{formatDuration(peak)}</span><span>{formatDuration(Math.round(peak / 2))}</span><span>0</span></div>
+    <div className="daily-usage-bars">{days.map(day => <span key={day.date} title={`${day.date} · 前台 ${formatDuration(day.foregroundSeconds)} · 启动 ${day.launchCount} 次`}><i style={{height: `${Math.max(5, day.foregroundSeconds / peak * 100)}%`}}/><small>{day.date.slice(5)}</small><b>{day.launchCount} 次</b></span>)}</div>
+    <div className="daily-axis-title"><span>Y：前台使用时长</span><span>X：日期</span></div>
+  </div>;
+}
+
+type ApplicationMetricKey = "cpuPercent" | "memoryBytes" | "diskReadBps" | "diskWriteBps";
+
+function appLinePath(history: ApplicationHistory, key: ApplicationMetricKey): string {
   if (history.points.length < 2) return "";
   const peak = Math.max(...history.points.map(point => point[key]), 1);
   return history.points.map((point, index) => `${index ? "L" : "M"}${(index / (history.points.length - 1) * 100).toFixed(2)},${(100 - point[key] / peak * 100).toFixed(2)}`).join(" ");
 }
 
+function formatApplicationAxisValue(key: ApplicationMetricKey, value: number): string {
+  if (key === "cpuPercent") return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
+  if (key === "memoryBytes") return formatBytes(value);
+  return formatRate(value);
+}
+
+function formatApplicationAxisTime(timestamp: number, rangeMinutes: number): string {
+  const date = new Date(timestamp);
+  return rangeMinutes <= 60
+    ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function ApplicationHistoryChart({ history, metric, label }: { history: ApplicationHistory; metric: ApplicationMetricKey; label: string }) {
+  const peak = Math.max(...history.points.map(point => point[metric]), 1);
+  const first = history.points.at(0)?.capturedAt;
+  const middle = history.points.at(Math.floor((history.points.length - 1) / 2))?.capturedAt;
+  const last = history.points.at(-1)?.capturedAt;
+  return <article>
+    <b>{label}</b>
+    <div className="app-chart-layout">
+      <div className="app-chart-y-axis"><span>{formatApplicationAxisValue(metric, peak)}</span><span>{formatApplicationAxisValue(metric, peak / 2)}</span><span>{formatApplicationAxisValue(metric, 0)}</span></div>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={`${label} 历史曲线`}>
+        <path className="app-chart-grid" d="M0,0 H100 M0,50 H100 M0,100 H100 M0,0 V100 M50,0 V100 M100,0 V100" />
+        <path className="app-chart-data" d={appLinePath(history, metric)} />
+      </svg>
+      <div className="app-chart-x-axis"><time>{first == null ? "--" : formatApplicationAxisTime(first, history.rangeMinutes)}</time><time>{middle == null ? "--" : formatApplicationAxisTime(middle, history.rangeMinutes)}</time><time>{last == null ? "--" : formatApplicationAxisTime(last, history.rangeMinutes)}</time></div>
+    </div>
+    <small>{history.points.length} 个采样点 · Y 轴峰值 {formatApplicationAxisValue(metric, peak)}</small>
+  </article>;
+}
+
 function TrendChart({ history, range, onRange }: { history: HistorySummary; range: number; onRange: (range: number) => void }) {
   return <section className="card trend-card">
     <div className="section-title"><h3>资源趋势</h3><div className="range-tabs">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={range === value ? "active" : ""} onClick={() => onRange(Number(value))}>{label}</button>)}</div></div>
-    <div className="trend-grid">{([['cpuPercent','CPU','cpu-line'],['memoryPercent','内存','memory-line'],['diskBps','磁盘吞吐','disk-line'],['networkBps','网络吞吐','network-line']] as const).map(([key,label,style]) => <div className="mini-trend" key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path className="grid-line" d="M0,25 H100 M0,50 H100 M0,75 H100"/><path className={style} d={linePath(history.points,key)}/></svg></div>)}</div>
+    <div className="trend-grid">{([['cpuPercent','CPU','cpu-line'],['memoryPercent','内存','memory-line'],['diskBps','磁盘吞吐','disk-line'],['networkBps','网络吞吐','network-line']] as const).map(([key,label,style]) => <SystemHistoryChart key={key} history={history} range={range} metric={key} label={label} style={style} />)}</div>
     <div className="monitor-insights">
       <div><span>CPU 峰值</span><b>{history.peakCpuPercent.toFixed(0)}%</b></div>
       <div><span>内存峰值</span><b>{history.peakMemoryPercent.toFixed(0)}%</b></div>
@@ -421,7 +485,7 @@ export default function App() {
     {appHistory && <div className="modal-backdrop" onClick={closeApplicationHistory}><section className="modal report-modal app-history-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">单个应用资源轨迹</span><h3>{appHistory.name} 历史曲线</h3></div><button className="modal-close" onClick={closeApplicationHistory} aria-label={appHistoryReturnApp == null ? "关闭应用历史" : "返回应用详情"} title={appHistoryReturnApp == null ? "关闭" : "返回应用详情"}>{appHistoryReturnApp == null ? "×" : "←"}</button></div>
       <div className="range-tabs metric-history-ranges">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([range,label]) => <button className={appHistoryRange === range ? "active" : ""} key={range} onClick={() => void showApplicationHistory(appHistory.name, Number(range))}>{label}</button>)}</div>
-      <div className="report-scroll"><div className="app-history-charts">{([['cpuPercent','CPU'],['memoryBytes','内存'],['diskReadBps','磁盘读取'],['diskWriteBps','磁盘写入']] as const).map(([key,label]) => <article key={key}><b>{label}</b><svg viewBox="0 0 100 100" preserveAspectRatio="none"><path d={appLinePath(appHistory,key)} /></svg><small>{appHistory.points.length} 个采样点</small></article>)}</div>{!appHistory.points.length && <p className="empty">该应用在所选范围内还没有历史数据，保持运行一会儿后会自动积累。</p>}</div>
+      <div className="report-scroll"><div className="app-history-charts">{([['cpuPercent','CPU'],['memoryBytes','内存'],['diskReadBps','磁盘读取'],['diskWriteBps','磁盘写入']] as const).map(([key,label]) => <ApplicationHistoryChart key={key} history={appHistory} metric={key} label={label} />)}</div>{!appHistory.points.length && <p className="empty">该应用在所选范围内还没有历史数据，保持运行一会儿后会自动积累。</p>}</div>
     </section></div>}
     {appDetails && appDetailsPresentation && <div className="modal-backdrop" onClick={() => setSelectedApp(null)}><section className="modal report-modal app-detail-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">应用实时详情 · {appDetails.name}</span><h3>{appDetailsPresentation.productName}</h3></div><button className="modal-close" onClick={() => setSelectedApp(null)} aria-label="关闭应用详情">×</button></div>
@@ -520,8 +584,8 @@ export default function App() {
           <div><b>{usageSummary.sessionCount}</b><span>应用启动次数</span></div>
           <div><b>{formatDuration(Math.round(usageSummary.totalForegroundSeconds / Math.max(1, usageSummary.sessionCount)))}</b><span>平均单次前台使用</span></div>
         </div>
-        {usageSummary.topApps.length > 0 && <div className="usage-ranking"><h4>前台使用排行</h4>{usageSummary.topApps.slice(0, 5).map((app, index) => <div key={app.name}><span>{index + 1}. {app.name}</span><i><em style={{width: `${Math.max(4, app.foregroundSeconds / Math.max(1, usageSummary.topApps[0].foregroundSeconds) * 100)}%`}} /></i><b>{formatDuration(app.foregroundSeconds)}</b></div>)}</div>}
-        {usageSummary.dailyUsage.length > 0 && <div className="daily-usage"><h4>每日使用与启动次数</h4><div>{usageSummary.dailyUsage.map(day => { const peak = Math.max(...usageSummary.dailyUsage.map(item => item.foregroundSeconds), 1); return <span key={day.date} title={`${day.date} · 前台 ${formatDuration(day.foregroundSeconds)} · 启动 ${day.launchCount} 次`}><i style={{height: `${Math.max(5, day.foregroundSeconds / peak * 100)}%`}}/><small>{day.date.slice(5)}</small><b>{day.launchCount} 次</b></span>})}</div></div>}
+        {usageSummary.topApps.length > 0 && <div className="usage-ranking"><h4>前台使用排行</h4>{usageSummary.topApps.slice(0, 5).map((app, index) => <div key={app.name}><span>{index + 1}. {app.name}</span><i><em style={{width: `${Math.max(4, app.foregroundSeconds / Math.max(1, usageSummary.topApps[0].foregroundSeconds) * 100)}%`}} /></i><b>{formatDuration(app.foregroundSeconds)}</b></div>)}<div className="usage-ranking-axis"><span>0</span><span>{formatDuration(Math.round(usageSummary.topApps[0].foregroundSeconds / 2))}</span><span>{formatDuration(usageSummary.topApps[0].foregroundSeconds)}</span></div><small className="usage-axis-title">X：前台使用时长 · Y：应用</small></div>}
+        {usageSummary.dailyUsage.length > 0 && <div className="daily-usage"><h4>每日使用与启动次数</h4><DailyUsageChart days={usageSummary.dailyUsage} /></div>}
       </div>}
       {usageTab === "list" && <div className="usage-tab-panel usage-list-panel" role="tabpanel">
       <div className="usage-list-tools"><input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" /><button onClick={exportUsage}>导出 CSV</button></div>
