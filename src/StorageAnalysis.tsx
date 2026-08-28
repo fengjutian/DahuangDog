@@ -150,7 +150,7 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
       </button>)}
     </div>
     {!result && !scanning && !error && <div className="storage-scan-prompt"><b>选择一个磁盘开始分析</b><p>默认只读取当前一层；点击文件夹继续深入，需要精确占比时再计算当前目录。</p></div>}
-    {scanning && !result?.root.children.length && <div className="storage-scan-prompt scanning"><span className="storage-spinner"/><b>正在读取 {selectedRoot}</b><p>按需模式只枚举当前目录，不会扫描整个磁盘。</p></div>}
+    {scanning && !result?.root.children.length && <div className="storage-scan-prompt scanning"><span className="storage-spinner"/><b>正在读取 {selectedRoot}</b><p>按需模式只枚举当前目录，不会扫描整个磁盘。</p>{activeTask.current && <button onClick={cancelActiveScan}>取消扫描</button>}</div>}
     {error && <div className="storage-scan-prompt error"><b>读取失败</b><p>{error}</p><button onClick={() => void browse(selectedRoot, true)}>重新读取</button></div>}
     {result && (!scanning || result.root.children.length > 0) && <>
       {scanning && <div className="storage-progress-note"><span className="storage-spinner"/><span>正在逐项计算，已显示 {result.root.children.length} 个顶层项目；图表可立即使用。</span></div>}
