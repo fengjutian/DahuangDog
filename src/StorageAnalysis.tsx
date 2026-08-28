@@ -64,20 +64,37 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
   const [result, setResult] = useState<StorageScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
+  const scanGeneration = useRef(0);
   const scan = async (root: string, force = false) => {
     const cached = scanCache.get(root);
     if (!force && cached && Date.now() - cached.savedAt < SCAN_CACHE_MS) {
       setSelectedRoot(root); setResult(cached.result); setError(""); return;
     }
+    const generation = ++scanGeneration.current;
     setSelectedRoot(root); setScanning(true); setError("");
     setResult({ root: { name: root, path: root, sizeBytes: 0, kind: "directory", children: [] }, fileCount: 0, directoryCount: 0, skippedCount: 0 });
-    try { const completed = await scanStorageTree(root, entry => setResult(current => {
-      if (!current || current.root.path !== root) return current;
-      const children = [...current.root.children, entry].sort((a, b) => b.sizeBytes - a.sizeBytes);
-      return { ...current, root: { ...current.root, children, sizeBytes: children.reduce((sum, item) => sum + item.sizeBytes, 0) } };
-    })); scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); }
-    catch (reason) { setError(String(reason)); }
-    finally { setScanning(false); }
+    let pending: StorageEntry[] = [];
+    let flushTimer: number | undefined;
+    const flush = () => {
+      flushTimer = undefined;
+      if (generation !== scanGeneration.current || !pending.length) return;
+      const batch = pending; pending = [];
+      setResult(current => {
+        if (!current || current.root.path !== root) return current;
+        const children = [...current.root.children, ...batch].sort((a, b) => b.sizeBytes - a.sizeBytes);
+        return { ...current, root: { ...current.root, children, sizeBytes: children.reduce((sum, item) => sum + item.sizeBytes, 0) } };
+      });
+    };
+    try {
+      const completed = await scanStorageTree(root, entry => {
+        if (generation !== scanGeneration.current) return;
+        pending.push(entry);
+        flushTimer ??= window.setTimeout(flush, 150);
+      });
+      if (flushTimer != null) window.clearTimeout(flushTimer);
+      if (generation === scanGeneration.current) { scanCache.set(root, { savedAt: Date.now(), result: completed }); setResult(completed); }
+    } catch (reason) { if (generation === scanGeneration.current) setError(String(reason)); }
+    finally { if (generation === scanGeneration.current) setScanning(false); }
   };
   if (!disks.length) return <p className="empty">暂时没有读取到磁盘分区数据。</p>;
   return <>

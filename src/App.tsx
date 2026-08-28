@@ -1,7 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { clearLocalMemory, clearMinimaxApiKey, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAiStatus, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveMinimaxApiKey, saveSettings, scanCleanup, testMinimaxConnection, updateAlert } from "./api";
-import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
+import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, SystemSnapshot, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
   idle: "在狗窝待命", patrol: "正在巡逻", suspicious: "竖起耳朵",
@@ -19,6 +19,23 @@ const timelineKindLabel: Record<string, string> = {
 const StorageAnalysis = lazy(() => import("./StorageAnalysis"));
 
 type HistoryMetricKey = "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps";
+
+function VirtualList<T>({ items, itemHeight, height = 430, className = "", keyFor, renderItem }: { items: T[]; itemHeight: number; height?: number; className?: string; keyFor: (item: T, index: number) => string; renderItem: (item: T, index: number) => React.ReactNode }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const host = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const maximum = Math.max(0, items.length * itemHeight - height);
+    if (scrollTop > maximum) { setScrollTop(maximum); if (host.current) host.current.scrollTop = maximum; }
+  }, [height, itemHeight, items.length, scrollTop]);
+  const overscan = 5;
+  const start = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+  const end = Math.min(items.length, Math.ceil((scrollTop + height) / itemHeight) + overscan);
+  return <div ref={host} className={`virtual-list ${className}`} style={{ height }} onScroll={event => setScrollTop(event.currentTarget.scrollTop)}>
+    <div className="virtual-list-spacer" style={{ height: items.length * itemHeight }}>
+      {items.slice(start, end).map((item, offset) => { const index = start + offset; return <div className="virtual-list-item" style={{ height: itemHeight, transform: `translateY(${index * itemHeight}px)` }} key={keyFor(item, index)}>{renderItem(item, index)}</div>; })}
+    </div>
+  </div>;
+}
 
 const historyMetricLabel: Record<HistoryMetricKey, string> = {
   cpuPercent: "CPU",
@@ -70,16 +87,30 @@ function applicationPresentation(application: ApplicationGroup) {
   return { productName, description };
 }
 
-function Metric({ label, value, tone, onClick }: { label: string; value: string; tone?: "warn"; onClick?: () => void }) {
+const Metric = memo(function Metric({ label, value, tone, onClick }: { label: string; value: string; tone?: "warn"; onClick?: () => void }) {
   if (onClick) return <button className={`metric metric-clickable ${tone ?? ""}`} onClick={onClick} aria-label={`查看${label}历史明细`}><span>{label}</span><strong>{value}</strong><small>查看历史</small></button>;
   return <div className={`metric ${tone ?? ""}`}><span>{label}</span><strong>{value}</strong></div>;
-}
+});
+
+const DashboardMetrics = memo(function DashboardMetrics({ snap, findingCount, onHistory, onStorage }: { snap: SystemSnapshot | null; findingCount: number; onHistory: (metric: HistoryMetricKey) => void; onStorage: () => void }) {
+  return <section className="metrics">
+    <Metric label="CPU" value={snap ? `${snap.cpuPercent.toFixed(0)}%` : "--"} tone={snap && snap.cpuPercent >= 90 ? "warn" : undefined} onClick={() => onHistory("cpuPercent")} />
+    <Metric label="内存" value={snap ? `${snap.memoryPercent.toFixed(0)}%` : "--"} tone={snap && snap.memoryPercent >= 90 ? "warn" : undefined} onClick={() => onHistory("memoryPercent")} />
+    <Metric label="已用内存" value={snap ? formatBytes(snap.usedMemoryBytes) : "--"} />
+    <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} onClick={() => onHistory("diskBps")} />
+    <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} onClick={() => onHistory("networkBps")} />
+    <Metric label="发现" value={`${findingCount} 个`} tone={findingCount ? "warn" : undefined} />
+    <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} onClick={onStorage} />
+    <Metric label="系统运行" value={snap ? formatDuration(snap.uptimeSeconds) : "--"} />
+    <Metric label="进程 / 线程" value={snap ? `${snap.processes.length}+ / ${snap.processes.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}+` : "--"} />
+  </section>;
+});
 
 function linePath(points: MetricPoint[], key: "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps"): string {
   if (points.length < 2) return "";
+  const max = key === "cpuPercent" || key === "memoryPercent" ? 100 : Math.max(...points.map(item => item[key]), 1);
   return points.map((point, index) => {
     const x = index / (points.length - 1) * 100;
-    const max = key === "cpuPercent" || key === "memoryPercent" ? 100 : Math.max(...points.map(item => item[key]), 1);
     const y = 100 - Math.max(0, Math.min(100, point[key] / max * 100));
     return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
@@ -155,7 +186,7 @@ function ApplicationHistoryChart({ history, metric, label }: { history: Applicat
   </article>;
 }
 
-function TrendChart({ history, range, onRange }: { history: HistorySummary; range: number; onRange: (range: number) => void }) {
+const TrendChart = memo(function TrendChart({ history, range, onRange }: { history: HistorySummary; range: number; onRange: (range: number) => void }) {
   return <section className="card trend-card">
     <div className="section-title"><h3>资源趋势</h3><div className="range-tabs">{[[10,"10 分钟"],[60,"1 小时"],[1440,"24 小时"],[10080,"7 天"]].map(([value,label]) => <button key={value} className={range === value ? "active" : ""} onClick={() => onRange(Number(value))}>{label}</button>)}</div></div>
     <div className="trend-grid">{([['cpuPercent','CPU','cpu-line'],['memoryPercent','内存','memory-line'],['diskBps','磁盘吞吐','disk-line'],['networkBps','网络吞吐','network-line']] as const).map(([key,label,style]) => <SystemHistoryChart key={key} history={history} range={range} metric={key} label={label} style={style} />)}</div>
@@ -166,9 +197,10 @@ function TrendChart({ history, range, onRange }: { history: HistorySummary; rang
       <div><span>平均网络</span><b>{formatRate(history.averageNetworkBps)}</b></div>
     </div>
   </section>;
-}
+});
 
 export default function App() {
+  const pageVisible = useRef(!document.hidden);
   const [status, setStatus] = useState<CurrentStatus | null>(null);
   const [preview, setPreview] = useState<ActionPreview | null>(null);
   const [message, setMessage] = useState("");
@@ -212,7 +244,7 @@ export default function App() {
   const [alertFilter, setAlertFilter] = useState("");
   const [patterns, setPatterns] = useState<PeriodicPattern[] | null>(null);
   const [cleanup, setCleanup] = useState<CleanupReport | null>(null);
-  const [cleanupSelection, setCleanupSelection] = useState<string[]>([]);
+  const [cleanupSelection, setCleanupSelection] = useState<Set<string>>(() => new Set());
   const [cleanupFilter, setCleanupFilter] = useState("all");
 
   const refresh = useCallback(async () => {
@@ -222,16 +254,26 @@ export default function App() {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(refresh, 3000);
+    const tauriRuntime = "__TAURI_INTERNALS__" in window;
+    const timer = tauriRuntime ? undefined : window.setInterval(() => { if (pageVisible.current) void refresh(); }, 3000);
     let unlisten: undefined | (() => void);
-    if ("__TAURI_INTERNALS__" in window) {
-      void listen<CurrentStatus>("status://updated", event => setStatus(event.payload)).then(fn => { unlisten = fn; });
+    if (tauriRuntime) {
+      void listen<CurrentStatus>("status://updated", event => { if (pageVisible.current) setStatus(event.payload); }).then(fn => { unlisten = fn; });
     }
-    return () => { window.clearInterval(timer); unlisten?.(); };
+    return () => { if (timer != null) window.clearInterval(timer); unlisten?.(); };
   }, [refresh]);
 
   useEffect(() => {
-    const load = () => void getHistoryRange(historyRange).then(result => { setHistory(result); setHistoryError(""); }).catch(error => setHistoryError(String(error)));
+    const onVisibilityChange = () => {
+      pageVisible.current = !document.hidden;
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [refresh]);
+
+  useEffect(() => {
+    const load = () => { if (pageVisible.current) void getHistoryRange(historyRange).then(result => { setHistory(result); setHistoryError(""); }).catch(error => setHistoryError(String(error))); };
     load();
     const timer = window.setInterval(load, 10_000);
     return () => window.clearInterval(timer);
@@ -297,13 +339,13 @@ export default function App() {
 
   async function showCleanup() {
     setBusy(true);
-    try { const report = await scanCleanup(); setCleanup(report); setCleanupFilter("all"); setCleanupSelection(report.candidates.filter(item => item.cleanable).slice(0, 1_000).map(item => item.path)); }
+    try { const report = await scanCleanup(); setCleanup(report); setCleanupFilter("all"); setCleanupSelection(new Set(report.candidates.filter(item => item.cleanable).slice(0, 1_000).map(item => item.path))); }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
   }
 
   async function cleanSelected() {
-    try { const preview = await prepareCleanup(cleanupSelection); if (!window.confirm(`${preview.title}\n${preview.itemCount} 个文件，共 ${formatBytes(preview.totalBytes)}\n\n${preview.warning}`)) return; const result = await confirmMaintenance(preview.previewId); setMessage(result.message); await showCleanup(); }
+    try { const preview = await prepareCleanup([...cleanupSelection]); if (!window.confirm(`${preview.title}\n${preview.itemCount} 个文件，共 ${formatBytes(preview.totalBytes)}\n\n${preview.warning}`)) return; const result = await confirmMaintenance(preview.previewId); setMessage(result.message); await showCleanup(); }
     catch (error) { setMessage(String(error)); }
   }
 
@@ -431,23 +473,29 @@ export default function App() {
     catch (error) { setMessage(String(error)); }
   }
 
-  if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
-  const snap = status.snapshot;
-  const usageSince = Date.now() - usagePeriod * 24 * 60 * 60 * 1000;
-  const visibleUsage = usage?.filter(record => record.lastSeenAt >= usageSince && record.name.toLowerCase().includes(usageQuery.trim().toLowerCase())) ?? [];
-  const visiblePrograms = security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [];
+  const snap = status?.snapshot ?? null;
+  const visibleUsage = useMemo(() => {
+    const usageSince = Date.now() - usagePeriod * 24 * 60 * 60 * 1000;
+    const query = usageQuery.trim().toLowerCase();
+    return usage?.filter(record => record.lastSeenAt >= usageSince && record.name.toLowerCase().includes(query)) ?? [];
+  }, [usage, usagePeriod, usageQuery]);
+  const visiblePrograms = useMemo(() => security?.programs.filter(program => securityFilter === "all" || program.riskLevel === securityFilter) ?? [], [security, securityFilter]);
   const normalizedProcessQuery = processQuery.trim().toLowerCase();
-  const visibleApplications = snap?.applications.filter(application => {
+  const visibleApplications = useMemo(() => snap?.applications.filter(application => {
     if (!normalizedProcessQuery) return true;
     return application.name.toLowerCase().includes(normalizedProcessQuery)
       || String(application.rootPid).includes(normalizedProcessQuery)
       || application.members.some(process => process.name.toLowerCase().includes(normalizedProcessQuery)
         || String(process.pid).includes(normalizedProcessQuery));
-  }).slice(0, 8) ?? [];
+  }).slice(0, 8) ?? [], [snap?.applications, normalizedProcessQuery]);
   const appDetails = selectedApp == null ? null : snap?.applications.find(application => application.rootPid === selectedApp) ?? null;
   const appDetailsPresentation = appDetails ? applicationPresentation(appDetails) : null;
-  const cleanupCategories = cleanup ? [...new Set(cleanup.candidates.map(item => item.category))] : [];
-  const visibleCleanup = cleanup?.candidates.filter(item => cleanupFilter === "all" || item.category === cleanupFilter) ?? [];
+  const cleanupCategories = useMemo(() => cleanup ? [...new Set(cleanup.candidates.map(item => item.category))] : [], [cleanup]);
+  const visibleCleanup = useMemo(() => cleanup?.candidates.filter(item => cleanupFilter === "all" || item.category === cleanupFilter) ?? [], [cleanup, cleanupFilter]);
+  const openHistory = useCallback((metric: HistoryMetricKey) => setSelectedHistoryMetric(metric), []);
+  const openStorage = useCallback(() => setStorageOpen(true), []);
+
+  if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
 
   return <main className="shell">
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setStorageOpen(true)}>💾 存储分析</button><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
@@ -457,17 +505,7 @@ export default function App() {
       <div><span className="eyebrow">今天的巡逻报告</span><h2>{status.summary}</h2><p>健康度 <b>{status.healthScore}</b> / 100</p><button className="diagnose-button" onClick={diagnose} disabled={busy}>{busy ? "正在检查…" : "大黄，电脑为什么卡？"}</button></div>
     </section>
 
-    <section className="metrics">
-      <Metric label="CPU" value={snap ? `${snap.cpuPercent.toFixed(0)}%` : "--"} tone={snap && snap.cpuPercent >= 90 ? "warn" : undefined} onClick={() => setSelectedHistoryMetric("cpuPercent")} />
-      <Metric label="内存" value={snap ? `${snap.memoryPercent.toFixed(0)}%` : "--"} tone={snap && snap.memoryPercent >= 90 ? "warn" : undefined} onClick={() => setSelectedHistoryMetric("memoryPercent")} />
-      <Metric label="已用内存" value={snap ? formatBytes(snap.usedMemoryBytes) : "--"} />
-      <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} onClick={() => setSelectedHistoryMetric("diskBps")} />
-      <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} onClick={() => setSelectedHistoryMetric("networkBps")} />
-      <Metric label="发现" value={`${status.findings.length} 个`} tone={status.findings.length ? "warn" : undefined} />
-      <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} onClick={() => setStorageOpen(true)} />
-      <Metric label="系统运行" value={snap ? formatDuration(snap.uptimeSeconds) : "--"} />
-      <Metric label="进程 / 线程" value={snap ? `${snap.processes.length}+ / ${snap.processes.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}+` : "--"} />
-    </section>
+    <DashboardMetrics snap={snap} findingCount={status.findings.length} onHistory={openHistory} onStorage={openStorage} />
 
     {status.verification && <section className={`verification ${status.verification.status}`}>
       <span>{status.verification.status === "observing" ? "👀" : status.verification.status === "improved" ? "✅" : "🤔"}</span>
@@ -559,9 +597,9 @@ export default function App() {
     </section></div>}
     {cleanup && <div className="modal-backdrop" onClick={() => setCleanup(null)}><section className="modal report-modal cleanup-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">只读扫描 · 删除前再次确认</span><h3>🧹 磁盘清理助手</h3></div><button className="modal-close" onClick={() => setCleanup(null)} aria-label="关闭清理助手">×</button></div>
-      <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>选中的缓存将移入 Windows 回收站；系统缓存、回收站容量和重复文件只做分析。</span><button disabled={!cleanupSelection.length} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.length} 项</button></div>
+      <div className="cleanup-summary"><b>可安全选择 {formatBytes(cleanup.reclaimableBytes)}</b><span>选中的缓存将移入 Windows 回收站；系统缓存、回收站容量和重复文件只做分析。</span><button disabled={!cleanupSelection.size} onClick={() => void cleanSelected()}>清理已选 {cleanupSelection.size} 项</button></div>
       <div className="cleanup-filters" aria-label="清理分类"><button className={cleanupFilter === "all" ? "active" : ""} onClick={() => setCleanupFilter("all")}>全部 {cleanup.candidates.length}</button>{cleanupCategories.map(category => <button key={category} className={cleanupFilter === category ? "active" : ""} onClick={() => setCleanupFilter(category)}>{category}</button>)}</div>
-      <div className="report-scroll cleanup-list">{visibleCleanup.map(item => <label key={`${item.category}-${item.path}`}><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.includes(item.path)} onChange={event => setCleanupSelection(event.target.checked ? [...cleanupSelection,item.path] : cleanupSelection.filter(path => path !== item.path))}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可回收" : "只读分析"}</span></label>)}{!visibleCleanup.length && <p className="empty">当前分类没有发现可展示的项目。</p>}</div>
+      {visibleCleanup.length ? <VirtualList items={visibleCleanup} itemHeight={62} className="cleanup-list" keyFor={item => `${item.category}-${item.path}`} renderItem={item => <label><input type="checkbox" disabled={!item.cleanable} checked={item.cleanable && cleanupSelection.has(item.path)} onChange={event => setCleanupSelection(current => { const next = new Set(current); if (event.target.checked) next.add(item.path); else next.delete(item.path); return next; })}/><div><b>{item.category}</b><code title={item.path}>{item.path}</code><small>{formatBytes(item.sizeBytes)} · {new Date(item.modifiedAt).toLocaleString("zh-CN")}</small></div><span>{item.cleanable ? "可回收" : "只读分析"}</span></label>} /> : <p className="empty">当前分类没有发现可展示的项目。</p>}
     </section></div>}
     {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>
@@ -633,12 +671,12 @@ export default function App() {
       {usageTab === "list" && <div className="usage-tab-panel usage-list-panel" role="tabpanel">
       <div className="usage-list-tools"><input className="usage-search" value={usageQuery} onChange={event => setUsageQuery(event.target.value)} placeholder="搜索应用名称" /><button onClick={exportUsage}>导出 CSV</button></div>
       <div className="usage-head"><span>应用</span><span>启动 / 关闭</span><span>运行时间</span><span>前台使用</span></div>
-      <div className="usage-list">{visibleUsage.map(record => <article key={record.sessionId} className="usage-row">
+      {visibleUsage.length ? <VirtualList items={visibleUsage} itemHeight={72} className="usage-list" keyFor={record => record.sessionId} renderItem={record => <article className="usage-row">
         <div><b>{record.name}</b><small>PID {record.rootPid} · 峰值 {record.memberPeak} 个进程</small></div>
         <div><span>{new Date(record.startedAt).toLocaleString("zh-CN")}</span><small>{record.isRunning ? "仍在运行" : record.closedAt ? `关闭于 ${new Date(record.closedAt).toLocaleString("zh-CN")}` : "关闭时间未知"}</small></div>
         <div><b>{formatDuration(record.runtimeSeconds)}</b><small>后台 {formatDuration(record.backgroundSeconds)}</small></div>
         <div><b>{formatDuration(record.foregroundSeconds)}</b><small>{record.isRunning ? "● 活跃会话" : "已结束"}</small></div>
-      </article>)}{!visibleUsage.length && <p className="empty">没有匹配的应用使用记录。</p>}</div>
+      </article>} /> : <p className="empty">没有匹配的应用使用记录。</p>}
       </div>}
       </div>
     </section></div>}
