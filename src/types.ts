@@ -130,7 +130,11 @@ export interface LocalDiagnosis {
   details: string[];
   suggestions: string[];
   confidence: "low" | "medium" | "high";
+  source: "local" | "minimax" | "local-fallback";
+  model: string | null;
 }
+
+export interface AiStatus { configured: boolean; }
 
 export interface ProgramRisk {
   pid: number;
@@ -208,6 +212,8 @@ export interface UserSettings {
   retentionDays: number;
   autoStart: boolean;
   applicationNetworkMonitoring: boolean;
+  minimaxEnabled: boolean;
+  minimaxModel: string;
 }
 
 export interface AppUsageRecord {

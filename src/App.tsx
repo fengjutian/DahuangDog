@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
+import { clearLocalMemory, clearMinimaxApiKey, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAiStatus, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveMinimaxApiKey, saveSettings, scanCleanup, updateAlert } from "./api";
 import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
@@ -181,6 +181,8 @@ export default function App() {
   const [selected, setSelected] = useState<ProcessSample | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [minimaxKey, setMinimaxKey] = useState("");
+  const [aiConfigured, setAiConfigured] = useState(false);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
   const [selectedApp, setSelectedApp] = useState<number | null>(null);
   const appDetailScrollRef = useRef<HTMLDivElement | null>(null);
@@ -230,7 +232,7 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [historyRange]);
 
-  useEffect(() => { void getSettings().then(setSettings).catch(() => undefined); }, []);
+  useEffect(() => { void Promise.all([getSettings(), getAiStatus()]).then(([nextSettings, ai]) => { setSettings(nextSettings); setAiConfigured(ai.configured); }).catch(() => undefined); }, []);
 
   useLayoutEffect(() => {
     if (selectedApp != null && appDetailScrollRef.current) {
@@ -355,9 +357,25 @@ export default function App() {
   async function persistSettings() {
     if (!settings) return;
     setBusy(true);
-    try { setSettings(await saveSettings(settings)); setMessage("巡逻设置已经保存。" ); setSettingsOpen(false); }
+    try {
+      let configured = aiConfigured;
+      if (minimaxKey.trim()) {
+        const ai = await saveMinimaxApiKey(minimaxKey);
+        configured = ai.configured;
+        setAiConfigured(ai.configured);
+        setMinimaxKey("");
+      }
+      if (settings.minimaxEnabled && !configured) throw new Error("启用 MiniMax 前请先输入 API Key");
+      setSettings(await saveSettings(settings)); setMessage("巡逻设置已经保存。" ); setSettingsOpen(false);
+    }
     catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
+  }
+
+  async function removeMinimaxKey() {
+    if (!window.confirm("确定从 Windows 凭据管理器删除 MiniMax API Key 吗？")) return;
+    try { const ai = await clearMinimaxApiKey(); setAiConfigured(ai.configured); setMinimaxKey(""); setMessage("MiniMax API Key 已删除。" ); }
+    catch (error) { setMessage(String(error)); }
   }
 
   async function clearMemory() {
@@ -445,10 +463,10 @@ export default function App() {
     </section>}
 
     {diagnosis && <section className="diagnosis card">
-      <div className="section-title"><h3>🐕 本地诊断</h3><button onClick={() => setDiagnosis(null)}>收起</button></div>
+      <div className="section-title"><h3>🐕 {diagnosis.source === "minimax" ? "MiniMax AI 诊断" : diagnosis.source === "local-fallback" ? "本地诊断（AI 已降级）" : "本地诊断"}</h3><button onClick={() => setDiagnosis(null)}>收起</button></div>
       <h2>{diagnosis.summary}</h2>
       <div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
-      <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · 完全在本机分析</small>
+      <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · {diagnosis.source === "minimax" ? `由 ${diagnosis.model} 分析，仅发送资源摘要` : "使用本机规则分析"}</small>
     </section>}
 
     {history && <TrendChart history={history} range={historyRange} onRange={setHistoryRange} />}
@@ -634,6 +652,14 @@ export default function App() {
       <label className="check"><input type="checkbox" checked={settings.autoStart} onChange={e => setSettings({...settings, autoStart: e.target.checked})} />登录 Windows 后自动在托盘巡逻</label>
       <label className="check"><input type="checkbox" checked={settings.applicationNetworkMonitoring} onChange={e => setSettings({...settings, applicationNetworkMonitoring: e.target.checked})} />应用级网络流量（需要管理员权限启动 ETW）</label>
       <p className="availability">启用后只记录每个进程的收发字节数，不采集网络内容。权限不足时会保持数据为空。</p>
+      <section className="ai-settings">
+        <div><h4>MiniMax AI 诊断</h4><span className={aiConfigured ? "configured" : ""}>{aiConfigured ? "API Key 已安全保存" : "尚未配置 API Key"}</span></div>
+        <label className="check"><input type="checkbox" checked={settings.minimaxEnabled} onChange={e => setSettings({...settings, minimaxEnabled: e.target.checked})} />使用 MiniMax 分析“电脑为什么卡”</label>
+        <label>模型 <select value={settings.minimaxModel} onChange={e => setSettings({...settings, minimaxModel: e.target.value})}><option value="MiniMax-M2.7">MiniMax-M2.7</option><option value="MiniMax-M2.7-highspeed">MiniMax-M2.7 高速</option><option value="MiniMax-M2.5">MiniMax-M2.5</option><option value="MiniMax-M2.5-highspeed">MiniMax-M2.5 高速</option></select></label>
+        <label>API Key <input type="password" value={minimaxKey} onChange={e => setMinimaxKey(e.target.value)} autoComplete="off" placeholder={aiConfigured ? "输入新 Key 可替换现有凭据" : "粘贴 MiniMax API Key"} /></label>
+        <p>密钥保存在 Windows 凭据管理器。AI 只接收资源指标、应用名称和异常摘要，不会接收文件路径、PID 或文件内容。</p>
+        {aiConfigured && <button className="remove-ai-key" onClick={() => void removeMinimaxKey()}>删除已保存的 API Key</button>}
+      </section>
       <button className="clear-memory" onClick={clearMemory}>清除所有本地记忆</button>
       <div className="actions"><button className="secondary" onClick={() => setSettingsOpen(false)}>取消</button><button className="primary" disabled={busy} onClick={persistSettings}>保存设置</button></div>
     </section></div>}

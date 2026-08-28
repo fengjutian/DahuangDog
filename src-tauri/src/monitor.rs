@@ -1041,6 +1041,8 @@ impl Monitor {
                 details: vec![],
                 suggestions: vec!["稍等几秒再试一次".into()],
                 confidence: "low".into(),
+                source: "local".into(),
+                model: None,
             };
         };
         let mut details = vec![
@@ -1107,7 +1109,48 @@ impl Monitor {
             details,
             suggestions,
             confidence: confidence.into(),
+            source: "local".into(),
+            model: None,
         }
+    }
+
+    pub fn ai_context(&self) -> serde_json::Value {
+        let Some(snapshot) = &self.snapshot else { return serde_json::json!({ "status": "尚无采样" }) };
+        serde_json::json!({
+            "capturedAt": snapshot.captured_at,
+            "system": {
+                "cpuPercent": snapshot.cpu_percent,
+                "memoryPercent": snapshot.memory_percent,
+                "usedMemoryBytes": snapshot.used_memory_bytes,
+                "totalMemoryBytes": snapshot.total_memory_bytes,
+                "diskReadBps": snapshot.disk_read_bps,
+                "diskWriteBps": snapshot.disk_write_bps,
+                "networkReceiveBps": snapshot.network_receive_bps,
+                "networkSendBps": snapshot.network_send_bps,
+                "uptimeSeconds": snapshot.uptime_seconds
+            },
+            "disks": snapshot.hardware.disks.iter().map(|disk| serde_json::json!({
+                "mountPoint": disk.mount_point,
+                "totalBytes": disk.total_bytes,
+                "availableBytes": disk.available_bytes,
+                "readBps": disk.read_bps,
+                "writeBps": disk.write_bps
+            })).collect::<Vec<_>>(),
+            "topApplications": snapshot.applications.iter().take(8).map(|application| serde_json::json!({
+                "name": application.product_name.as_deref().unwrap_or(&application.name),
+                "processCount": application.member_count,
+                "cpuPercent": application.cpu_percent,
+                "memoryBytes": application.memory_bytes,
+                "diskReadBps": application.disk_read_bps,
+                "diskWriteBps": application.disk_write_bps,
+                "networkBps": application.network_bps
+            })).collect::<Vec<_>>(),
+            "findings": self.findings.iter().map(|finding| serde_json::json!({
+                "severity": finding.severity,
+                "title": finding.title,
+                "evidence": finding.evidence
+            })).collect::<Vec<_>>()
+        })
     }
 
     pub fn settings(&self) -> UserSettings {
@@ -1133,6 +1176,9 @@ impl Monitor {
             || !(1..=90).contains(&settings.retention_days)
         {
             return Err("设置超出安全范围".into());
+        }
+        if !matches!(settings.minimax_model.as_str(), "MiniMax-M2.7" | "MiniMax-M2.7-highspeed" | "MiniMax-M2.5" | "MiniMax-M2.5-highspeed") {
+            return Err("不支持的 MiniMax 模型".into());
         }
         if let Some(storage) = &self.storage {
             storage.save_settings(&settings)?;

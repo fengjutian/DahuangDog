@@ -1,3 +1,4 @@
+mod ai;
 mod monitor;
 mod maintenance;
 mod network_etw;
@@ -22,7 +23,7 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 use types::{
-    ActionPreview, ActionResult, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory,
+    ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory,
     CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings,
 };
 
@@ -95,11 +96,29 @@ fn get_periodic_patterns(days: u32, state: tauri::State<'_, SharedMonitor>) -> R
 
 #[tauri::command]
 fn diagnose_performance(state: tauri::State<'_, SharedMonitor>) -> Result<LocalDiagnosis, String> {
-    Ok(state
-        .lock()
-        .map_err(|_| "监控状态暂时不可用".to_string())?
-        .diagnose())
+    let (mut local, settings, context) = {
+        let monitor = state.lock().map_err(|_| "监控状态暂时不可用".to_string())?;
+        (monitor.diagnose(), monitor.settings(), monitor.ai_context())
+    };
+    if !settings.minimax_enabled { return Ok(local); }
+    match ai::diagnose(&settings.minimax_model, context) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            local.source = "local-fallback".into();
+            local.details.insert(0, format!("MiniMax 暂时不可用，已自动改用本地规则：{error}"));
+            Ok(local)
+        }
+    }
 }
+
+#[tauri::command]
+fn get_ai_status() -> AiStatus { ai::status() }
+
+#[tauri::command]
+fn save_minimax_api_key(api_key: String) -> Result<AiStatus, String> { ai::save_api_key(&api_key) }
+
+#[tauri::command]
+fn clear_minimax_api_key() -> Result<AiStatus, String> { ai::clear_api_key() }
 
 #[tauri::command]
 fn get_security_report() -> Result<SecurityReport, String> {
@@ -277,6 +296,9 @@ pub fn run() {
             prepare_startup_change,
             confirm_maintenance,
             diagnose_performance,
+            get_ai_status,
+            save_minimax_api_key,
+            clear_minimax_api_key,
             get_security_report,
             open_file_location,
             export_usage_csv,

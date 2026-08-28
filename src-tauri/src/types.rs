@@ -167,7 +167,13 @@ pub struct LocalDiagnosis {
     pub details: Vec<String>,
     pub suggestions: Vec<String>,
     pub confidence: String,
+    pub source: String,
+    pub model: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStatus { pub configured: bool }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -266,6 +272,8 @@ pub struct UserSettings {
     pub retention_days: u32,
     pub auto_start: bool,
     pub application_network_monitoring: bool,
+    pub minimax_enabled: bool,
+    pub minimax_model: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -296,6 +304,8 @@ impl Default for UserSettings {
             retention_days: 7,
             auto_start: false,
             application_network_monitoring: false,
+            minimax_enabled: false,
+            minimax_model: "MiniMax-M2.7".into(),
         }
     }
 }

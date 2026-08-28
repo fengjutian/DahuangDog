@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionPreview, ActionResult, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings } from "./types";
+import type { ActionPreview, ActionResult, AiStatus, AlertRecord, AppUsageRecord, AppUsageSummary, ApplicationHistory, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MaintenancePreview, PeriodicPattern, SecurityReport, UserSettings } from "./types";
 
 const demoStatus: CurrentStatus = {
   dogState: "patrol",
@@ -121,7 +121,9 @@ export async function diagnosePerformance(): Promise<LocalDiagnosis> {
     summary: "我看了一圈，当前没有明显的资源瓶颈。",
     details: ["CPU 当前使用率 18%", "内存当前使用率 52%", "chrome.exe：CPU 8.2%，内存 1.5 GB"],
     suggestions: ["如果卡顿再次出现，我会继续记录当时的状态"],
-    confidence: "medium"
+    confidence: "medium",
+    source: "local",
+    model: null
   };
 }
 
@@ -146,7 +148,8 @@ export async function exportUsageCsv(content: string): Promise<ActionResult> {
   return invoke("export_usage_csv", { content });
 }
 
-const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false, applicationNetworkMonitoring: false };
+const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false, applicationNetworkMonitoring: false, minimaxEnabled: false, minimaxModel: "MiniMax-M2.7" };
+let demoAiConfigured = false;
 
 export async function getSettings(): Promise<UserSettings> {
   return isTauri() ? invoke("get_settings") : demoSettings;
@@ -154,6 +157,22 @@ export async function getSettings(): Promise<UserSettings> {
 
 export async function saveSettings(settings: UserSettings): Promise<UserSettings> {
   return isTauri() ? invoke("update_settings", { settings }) : settings;
+}
+
+export async function getAiStatus(): Promise<AiStatus> {
+  return isTauri() ? invoke("get_ai_status") : { configured: demoAiConfigured };
+}
+
+export async function saveMinimaxApiKey(apiKey: string): Promise<AiStatus> {
+  if (isTauri()) return invoke("save_minimax_api_key", { apiKey });
+  demoAiConfigured = Boolean(apiKey.trim());
+  return { configured: demoAiConfigured };
+}
+
+export async function clearMinimaxApiKey(): Promise<AiStatus> {
+  if (isTauri()) return invoke("clear_minimax_api_key");
+  demoAiConfigured = false;
+  return { configured: false };
 }
 
 export async function clearLocalMemory(): Promise<void> {
