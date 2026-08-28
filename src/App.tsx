@@ -449,7 +449,7 @@ export default function App() {
       <Metric label="磁盘读 / 写" value={snap ? `${formatRate(snap.diskReadBps)} / ${formatRate(snap.diskWriteBps)}` : "--"} onClick={() => setSelectedHistoryMetric("diskBps")} />
       <Metric label="网络下 / 上" value={snap ? `${formatRate(snap.networkReceiveBps)} / ${formatRate(snap.networkSendBps)}` : "--"} onClick={() => setSelectedHistoryMetric("networkBps")} />
       <Metric label="发现" value={`${status.findings.length} 个`} tone={status.findings.length ? "warn" : undefined} />
-      <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} />
+      <Metric label="磁盘空间" value={snap ? `${formatBytes(snap.diskAvailableBytes)} 可用` : "--"} tone={snap && snap.diskTotalBytes > 0 && snap.diskAvailableBytes / snap.diskTotalBytes < .1 ? "warn" : undefined} onClick={() => setStorageOpen(true)} />
       <Metric label="系统运行" value={snap ? formatDuration(snap.uptimeSeconds) : "--"} />
       <Metric label="进程 / 线程" value={snap ? `${snap.processes.length}+ / ${snap.processes.reduce((sum, process) => sum + (process.threadCount ?? 0), 0)}+` : "--"} />
     </section>
