@@ -10,6 +10,10 @@ fn validate_model(model: &str) -> Result<(), String> {
     if ALLOWED_MODELS.contains(&model) { Ok(()) } else { Err("不支持的 MiniMax 模型".into()) }
 }
 
+fn validate_api_key(key: &str) -> Result<(), String> {
+    if key.len() < 16 || key.len() > 2_500 { Err("MiniMax API Key 格式不正确".into()) } else { Ok(()) }
+}
+
 #[cfg(windows)]
 fn wide(value: &str) -> Vec<u16> { value.encode_utf16().chain(Some(0)).collect() }
 
@@ -76,6 +80,30 @@ pub fn clear_api_key() -> Result<AiStatus, String> { Err("MiniMax 凭据管理�
 pub fn has_api_key() -> bool { false }
 
 pub fn status() -> AiStatus { AiStatus { configured: has_api_key() } }
+
+pub fn test_connection(model: &str, api_key: Option<String>) -> Result<String, String> {
+    validate_model(model)?;
+    let key = match api_key.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+        Some(value) => value,
+        None => read_api_key()?,
+    };
+    validate_api_key(&key)?;
+    let response = reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build()
+        .map_err(|_| "无法初始化 MiniMax 网络客户端".to_string())?
+        .post(ENDPOINT).bearer_auth(key).json(&json!({
+            "model": model, "stream": false, "max_completion_tokens": 24, "temperature": 0,
+            "messages": [{ "role": "user", "content": "请只回复：连接成功" }]
+        })).send().map_err(|error| format!("无法连接 MiniMax：{error}"))?;
+    let status = response.status();
+    let payload: Value = response.json().map_err(|_| format!("MiniMax 返回了无法解析的响应（HTTP {status}）"))?;
+    if !status.is_success() {
+        let message = payload.pointer("/base_resp/status_msg").and_then(Value::as_str)
+            .or_else(|| payload.pointer("/error/message").and_then(Value::as_str)).unwrap_or("请求失败");
+        return Err(format!("MiniMax 请求失败（HTTP {status}）：{message}"));
+    }
+    let reply = payload.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("连接成功");
+    Ok(format!("连接成功 · {model} · {}", reply.trim().chars().take(40).collect::<String>()))
+}
 
 fn response_json(content: &str) -> Result<Value, String> {
     let without_thinking = if let Some(end) = content.rfind("</think>") { &content[end + 8..] } else { content };

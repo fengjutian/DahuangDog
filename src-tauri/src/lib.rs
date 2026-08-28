@@ -122,6 +122,12 @@ fn save_minimax_api_key(api_key: String) -> Result<AiStatus, String> { ai::save_
 fn clear_minimax_api_key() -> Result<AiStatus, String> { ai::clear_api_key() }
 
 #[tauri::command]
+async fn test_minimax_connection(model: String, api_key: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ai::test_connection(&model, api_key))
+        .await.map_err(|error| format!("MiniMax 测试任务异常结束：{error}"))?
+}
+
+#[tauri::command]
 fn get_security_report() -> Result<SecurityReport, String> {
     security::scan_security()
 }
@@ -307,6 +313,7 @@ pub fn run() {
             get_ai_status,
             save_minimax_api_key,
             clear_minimax_api_key,
+            test_minimax_connection,
             get_security_report,
             scan_storage_tree,
             open_file_location,

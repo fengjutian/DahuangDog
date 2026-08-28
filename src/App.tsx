@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { clearLocalMemory, clearMinimaxApiKey, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAiStatus, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveMinimaxApiKey, saveSettings, scanCleanup, updateAlert } from "./api";
+import { clearLocalMemory, clearMinimaxApiKey, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAiStatus, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveMinimaxApiKey, saveSettings, scanCleanup, testMinimaxConnection, updateAlert } from "./api";
 import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
 const stateLabel: Record<string, string> = {
@@ -177,12 +177,16 @@ export default function App() {
   const [historyError, setHistoryError] = useState("");
   const [historyRange, setHistoryRange] = useState(10);
   const [diagnosis, setDiagnosis] = useState<LocalDiagnosis | null>(null);
+  const [diagnosisOpen, setDiagnosisOpen] = useState(false);
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
   const [security, setSecurity] = useState<SecurityReport | null>(null);
   const [selected, setSelected] = useState<ProcessSample | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [minimaxKey, setMinimaxKey] = useState("");
   const [aiConfigured, setAiConfigured] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [expandedApp, setExpandedApp] = useState<number | null>(null);
   const [selectedApp, setSelectedApp] = useState<number | null>(null);
   const appDetailScrollRef = useRef<HTMLDivElement | null>(null);
@@ -336,10 +340,19 @@ export default function App() {
   }
 
   async function diagnose() {
-    setBusy(true);
+    setBusy(true); setDiagnosisLoading(true); setDiagnosisOpen(true); setDiagnosis(null);
     try { setDiagnosis(await diagnosePerformance()); }
-    catch (error) { setMessage(String(error)); }
-    finally { setBusy(false); }
+    catch (error) { setMessage(String(error)); setDiagnosisOpen(false); }
+    finally { setBusy(false); setDiagnosisLoading(false); }
+  }
+
+  async function testMinimax() {
+    if (!settings) return;
+    if (!minimaxKey.trim() && !aiConfigured) { setAiTestResult({ ok: false, message: "请先输入 API Key" }); return; }
+    setAiTesting(true); setAiTestResult(null);
+    try { setAiTestResult({ ok: true, message: await testMinimaxConnection(settings.minimaxModel, minimaxKey) }); }
+    catch (error) { setAiTestResult({ ok: false, message: String(error) }); }
+    finally { setAiTesting(false); }
   }
 
   async function scanSecurity() {
@@ -375,6 +388,7 @@ export default function App() {
   function closeSettings() {
     setSettingsOpen(false);
     setMinimaxKey("");
+    setAiTestResult(null);
   }
 
   async function removeMinimaxKey() {
@@ -465,13 +479,6 @@ export default function App() {
         <ul>{finding.evidence.map(item => <li key={item}>{item}</li>)}</ul>
         {finding.process && <button onClick={() => inspect(finding.process!)}>查看并处理 {finding.process.name}</button>}
       </article>)}
-    </section>}
-
-    {diagnosis && <section className="diagnosis card">
-      <div className="section-title"><h3>🐕 {diagnosis.source === "minimax" ? "MiniMax AI 诊断" : diagnosis.source === "local-fallback" ? "本地诊断（AI 已降级）" : "本地诊断"}</h3><button onClick={() => setDiagnosis(null)}>收起</button></div>
-      <h2>{diagnosis.summary}</h2>
-      <div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
-      <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · {diagnosis.source === "minimax" ? `由 ${diagnosis.model} 分析，仅发送资源摘要` : "使用本机规则分析"}</small>
     </section>}
 
     {history && <TrendChart history={history} range={historyRange} onRange={setHistoryRange} />}
@@ -646,6 +653,13 @@ export default function App() {
       </div>
     </nav>
 
+    {diagnosisOpen && <div className="modal-backdrop" onClick={() => !diagnosisLoading && setDiagnosisOpen(false)}><section className="modal report-modal diagnosis-modal" onClick={e => e.stopPropagation()}>
+      <div className="section-title"><div><span className="eyebrow">资源状态智能分析</span><h3>🐕 {diagnosis?.source === "minimax" ? "MiniMax AI 诊断" : diagnosis?.source === "local-fallback" ? "本地诊断（AI 已降级）" : "电脑卡顿诊断"}</h3></div><button className="modal-close" disabled={diagnosisLoading} onClick={() => setDiagnosisOpen(false)} aria-label="关闭诊断">×</button></div>
+      <div className="report-scroll">{diagnosisLoading ? <div className="diagnosis-loading"><span className="storage-spinner"/><b>大黄正在分析当前资源状态…</b><p>MiniMax 分析通常需要几秒钟。</p></div> : diagnosis && <div className="diagnosis diagnosis-dialog-content">
+        <h2>{diagnosis.summary}</h2><div className="diagnosis-grid"><div><b>我看到的</b><ul>{diagnosis.details.map(item => <li key={item}>{item}</li>)}</ul></div><div><b>我的建议</b><ul>{diagnosis.suggestions.map(item => <li key={item}>{item}</li>)}</ul></div></div>
+        <small>置信度：{diagnosis.confidence === "high" ? "高" : diagnosis.confidence === "medium" ? "中" : "低"} · {diagnosis.source === "minimax" ? `由 ${diagnosis.model} 分析，仅发送资源摘要` : "使用本机规则分析"}</small>
+      </div>}</div>
+    </section></div>}
     {settingsOpen && settings && <div className="modal-backdrop" onClick={closeSettings}><section className="modal settings-modal" onClick={e => e.stopPropagation()}>
       <header className="settings-header">
         <div><span className="risk">设置中心</span><h3>大黄狗设置</h3><p>调整巡逻频率、后台能力和 AI 诊断。</p></div>
@@ -678,6 +692,7 @@ export default function App() {
             <label className="setting-field">模型 <select value={settings.minimaxModel} onChange={e => setSettings({...settings, minimaxModel: e.target.value})}><option value="MiniMax-M2.7">MiniMax-M2.7</option><option value="MiniMax-M2.7-highspeed">MiniMax-M2.7 高速</option><option value="MiniMax-M2.5">MiniMax-M2.5</option><option value="MiniMax-M2.5-highspeed">MiniMax-M2.5 高速</option></select></label>
             <label className="setting-field">API Key <input type="password" value={minimaxKey} onChange={e => setMinimaxKey(e.target.value)} autoComplete="off" placeholder={aiConfigured ? "输入新 Key 可替换现有凭据" : "粘贴 MiniMax API Key"} /></label>
           </div>
+          <div className="ai-test-row"><button disabled={aiTesting} onClick={() => void testMinimax()}>{aiTesting ? "正在测试…" : "测试连接"}</button>{aiTestResult && <span className={aiTestResult.ok ? "success" : "failure"}>{aiTestResult.ok ? "✓" : "×"} {aiTestResult.message}</span>}</div>
           <p className="ai-privacy">🔒 密钥保存在 Windows 凭据管理器。AI 不会接收文件路径、PID 或文件内容。</p>
           {aiConfigured && <button className="remove-ai-key" onClick={() => void removeMinimaxKey()}>删除已保存的 API Key</button>}
         </section>

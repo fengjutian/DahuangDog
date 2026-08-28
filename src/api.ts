@@ -182,6 +182,11 @@ export async function clearMinimaxApiKey(): Promise<AiStatus> {
   return { configured: false };
 }
 
+export async function testMinimaxConnection(model: string, apiKey: string): Promise<string> {
+  if (!isTauri()) return "连接成功 · 浏览器演示模式";
+  return invoke("test_minimax_connection", { model, apiKey: apiKey.trim() || null });
+}
+
 export async function clearLocalMemory(): Promise<void> {
   if (!isTauri()) throw new Error("浏览器预览模式没有本地记忆");
   return invoke("clear_local_memory");
