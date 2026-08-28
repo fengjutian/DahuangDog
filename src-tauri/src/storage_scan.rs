@@ -111,6 +111,7 @@ fn load_index(path: &Path, exact: bool, modified_at: u64) -> Option<StorageScanR
     ).optional().ok()??;
     let mut result: StorageScanResult = serde_json::from_str(&json).ok()?;
     result.cache_hit = true;
+    result.resumed = false;
     Some(result)
 }
 
@@ -163,6 +164,15 @@ fn save_nodes(root: &Path, entry: &StorageEntry) {
     let Ok(mut connection) = index_connection() else { return };
     let Ok(transaction) = connection.transaction() else { return };
     insert_node(&transaction, &root.display().to_string(), Some(&root.display().to_string()), entry, now_millis());
+    let _ = transaction.commit();
+}
+
+fn replace_nodes(root: &Path, entry: &StorageEntry, indexed_at: u64) {
+    let Ok(mut connection) = index_connection() else { return };
+    let Ok(transaction) = connection.transaction() else { return };
+    let root_path = root.display().to_string();
+    let _ = transaction.execute("DELETE FROM storage_nodes WHERE root_path=?1", [&root_path]);
+    insert_node(&transaction, &root_path, None, entry, indexed_at);
     let _ = transaction.commit();
 }
 
@@ -237,7 +247,8 @@ where F: FnMut(StorageEntry) {
     if !force { if let Some(result) = load_index(&path, true, modified_at) { return Ok(result); } }
     if force { remove_checkpoint(&path); }
     let checkpoint = (!force).then(|| load_checkpoint(&path, modified_at)).flatten();
-    let resumed = checkpoint.is_some();
+    let resumed = checkpoint.as_ref().is_some_and(|value| !value.children.is_empty());
+    let resumed_items = checkpoint.as_ref().map(|value| value.children.len()).unwrap_or(0);
     let mut stats = checkpoint.as_ref().map(|value| value.stats.clone())
         .unwrap_or(ScanStats { directories: 1, ..Default::default() });
     let mut children = checkpoint.as_ref().map(|value| value.children.clone()).unwrap_or_default();
@@ -286,9 +297,9 @@ where F: FnMut(StorageEntry) {
     let result = StorageScanResult {
         root: StorageEntry { name: display_name(&path), path: path.display().to_string(), size_bytes, kind: "directory".into(), children },
         file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped, cache_hit: false, indexed_at: now_millis(),
-        resumed, completed_items: total_items, total_items,
+        resumed, completed_items: if resumed { resumed_items } else { total_items }, total_items,
     };
-    save_nodes(&path, &result.root);
+    replace_nodes(&path, &result.root, result.indexed_at);
     save_index(&path, true, modified_at, &result);
     save_capacity_snapshot(&path, &result);
     remove_checkpoint(&path);
@@ -328,7 +339,7 @@ pub fn list_directory(root: String, force: bool) -> Result<StorageScanResult, St
         file_count: stats.files, directory_count: stats.directories, skipped_count: stats.skipped, cache_hit: false, indexed_at: now_millis(),
         resumed: false, completed_items: visible_items, total_items: visible_items,
     };
-    save_nodes(&path, &result.root);
+    replace_nodes(&path, &result.root, result.indexed_at);
     save_index(&path, false, modified_at, &result);
     Ok(result)
 }

@@ -82,7 +82,7 @@ function StorageChart({ root, mode, onOpen }: { root: StorageEntry; mode: ChartM
   return <div className="storage-chart storage-tree-chart" ref={host} aria-label={mode === "treemap" ? "文件与文件夹矩形树图" : "文件与文件夹旭日图"} />;
 }
 
-export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
+export default function StorageAnalysis({ disks, onActivity }: { disks: DiskMetric[]; onActivity: (mode: "idle" | "scanning" | "success" | "error") => void }) {
   const [mode, setMode] = useState<ChartMode>("treemap");
   const [selectedRoot, setSelectedRoot] = useState(disks[0]?.mountPoint ?? "");
   const [result, setResult] = useState<StorageScanResult | null>(null);
@@ -98,6 +98,13 @@ export default function StorageAnalysis({ disks }: { disks: DiskMetric[] }) {
     if (taskId) void cancelStorageScan(taskId);
   }, []);
   useEffect(() => () => { cancelActiveScan(); }, [cancelActiveScan]);
+  useEffect(() => {
+    if (scanning) { onActivity("scanning"); return; }
+    if (error) { onActivity("error"); const timer = window.setTimeout(() => onActivity("idle"), 4000); return () => window.clearTimeout(timer); }
+    if (resultExact && result) { onActivity("success"); const timer = window.setTimeout(() => onActivity("idle"), 3500); return () => window.clearTimeout(timer); }
+    onActivity("idle");
+  }, [error, onActivity, result, resultExact, scanning]);
+  useEffect(() => () => onActivity("idle"), [onActivity]);
   useEffect(() => {
     if (!selectedRoot) return;
     void getStorageCapacityHistory(selectedRoot).then(setHistory).catch(() => setHistory([]));

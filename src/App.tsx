@@ -19,6 +19,37 @@ const timelineKindLabel: Record<string, string> = {
 const StorageAnalysis = lazy(() => import("./StorageAnalysis"));
 
 type HistoryMetricKey = "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps";
+type DogMode = "idle" | "watching" | "scanning" | "thinking" | "success" | "error";
+
+const dogPhrases: Record<DogMode, string[]> = {
+  idle: ["这里很安静，我陪你待一会儿。", "大黄在，慢慢来就好。", "摸摸头，我会继续留意电脑。"],
+  watching: ["我竖起耳朵了，正在留意这个变化。", "有一点动静，我先帮你看着。"],
+  scanning: ["我正在沿着文件夹闻过去，很快告诉你。", "已经记住走过的地方，中断也能接着找。"],
+  thinking: ["让我认真想一会儿，先不用着急。", "我在把线索排好，很快回来。"],
+  success: ["处理好了！今天也守住啦。", "完成啦，摇摇尾巴庆祝一下。"],
+  error: ["这里暂时过不去，休息一下再试也可以。", "没有弄坏任何东西，我把原因记下来了。"],
+};
+
+function DogCompanion({ mode, personality, quiet, reducedMotion, onDiagnose }: { mode: DogMode; personality: UserSettings["companionPersonality"]; quiet: boolean; reducedMotion: boolean; onDiagnose: () => void }) {
+  const [bubble, setBubble] = useState("");
+  const phraseIndex = useRef(0);
+  const speak = useCallback(() => {
+    const phrases = dogPhrases[mode];
+    phraseIndex.current = (phraseIndex.current + 1) % phrases.length;
+    setBubble(phrases[phraseIndex.current]);
+  }, [mode]);
+  useEffect(() => {
+    if (quiet || personality === "quiet") return;
+    const phrases = dogPhrases[mode];
+    setBubble(phrases[personality === "playful" ? Math.floor(Math.random() * phrases.length) : 0]);
+    const timer = window.setTimeout(() => setBubble(""), personality === "playful" ? 4800 : 3500);
+    return () => window.clearTimeout(timer);
+  }, [mode, personality, quiet]);
+  return <div className={`dog-companion dog-${mode} ${reducedMotion ? "reduced" : ""}`}>
+    {bubble && <div className="dog-bubble" role="status">{bubble}</div>}
+    <button className="avatar" onClick={speak} onDoubleClick={onDiagnose} aria-label="和大黄互动，双击开始诊断" title="点击摸摸头 · 双击立即诊断"><span aria-hidden="true">🐕</span><i aria-hidden="true"/></button>
+  </div>;
+}
 
 function VirtualList<T>({ items, itemHeight, height = 430, className = "", keyFor, renderItem }: { items: T[]; itemHeight: number; height?: number; className?: string; keyFor: (item: T, index: number) => string; renderItem: (item: T, index: number) => React.ReactNode }) {
   const [scrollTop, setScrollTop] = useState(0);
@@ -228,7 +259,7 @@ export default function App() {
   const [selected, setSelected] = useState<ProcessSample | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"patrol" | "system" | "ai" | "data">("patrol");
+  const [settingsTab, setSettingsTab] = useState<"patrol" | "companion" | "system" | "ai" | "data">("patrol");
   const [minimaxKey, setMinimaxKey] = useState("");
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiTesting, setAiTesting] = useState(false);
@@ -259,6 +290,7 @@ export default function App() {
   const [cleanup, setCleanup] = useState<CleanupReport | null>(null);
   const [cleanupSelection, setCleanupSelection] = useState<Set<string>>(() => new Set());
   const [cleanupFilter, setCleanupFilter] = useState("all");
+  const [dogActivity, setDogActivity] = useState<DogMode>("idle");
 
   const refresh = useCallback(async () => {
     try { setStatus(await getCurrentStatus()); }
@@ -396,10 +428,10 @@ export default function App() {
   }
 
   async function diagnose() {
-    setBusy(true); setDiagnosisLoading(true); setDiagnosisOpen(true); setDiagnosis(null);
-    try { setDiagnosis(await diagnosePerformance()); }
-    catch (error) { setMessage(String(error)); setDiagnosisOpen(false); }
-    finally { setBusy(false); setDiagnosisLoading(false); }
+    setBusy(true); setDiagnosisLoading(true); setDiagnosisOpen(true); setDiagnosis(null); setDogActivity("thinking");
+    try { setDiagnosis(await diagnosePerformance()); setDogActivity("success"); }
+    catch (error) { setMessage(String(error)); setDiagnosisOpen(false); setDogActivity("error"); }
+    finally { setBusy(false); setDiagnosisLoading(false); window.setTimeout(() => setDogActivity("idle"), 4000); }
   }
 
   async function testMinimax() {
@@ -512,11 +544,13 @@ export default function App() {
 
   if (!status) return <main className="loading">🐕 大黄狗正在醒来……</main>;
 
-  return <main className="shell">
+  const dogMode: DogMode = diagnosisLoading ? "thinking" : dogActivity !== "idle" ? dogActivity : status.findings.length ? "watching" : "idle";
+  const companion = settings ?? { companionPersonality: "warm" as const, companionQuietMode: false, reduceCompanionMotion: false };
+  return <main className="shell" data-reduce-motion={companion.reduceCompanionMotion || undefined}>
     <header><div className="brand"><span className="dog">🐕</span><div><h1>大黄狗</h1><p>住在 Windows 里的 AI 看门狗</p></div></div><div className="header-actions"><button onClick={() => setStorageOpen(true)}>💾 存储分析</button><button onClick={() => setHardwareOpen(true)}>🖥️ 硬件</button><button onClick={showUsage} disabled={busy}>⏱ 使用记录</button><button onClick={() => void showAlerts()} disabled={busy}>🔔 告警</button><button onClick={showPatterns} disabled={busy}>🕒 规律</button><button onClick={showCleanup} disabled={busy}>🧹 清理</button><button onClick={scanSecurity} disabled={busy}>🛡️ 看门报告</button></div></header>
 
     <section className="hero">
-      <div className="avatar" aria-hidden="true">🐕</div>
+      <DogCompanion mode={dogMode} personality={companion.companionPersonality} quiet={companion.companionQuietMode} reducedMotion={companion.reduceCompanionMotion} onDiagnose={() => void diagnose()} />
       <div><span className="eyebrow">今天的巡逻报告</span><h2>{status.summary}</h2><p>健康度 <b>{status.healthScore}</b> / 100</p><button className="diagnose-button" onClick={diagnose} disabled={busy}>{busy ? "正在检查…" : "大黄，电脑为什么卡？"}</button></div>
     </section>
 
@@ -617,7 +651,7 @@ export default function App() {
     {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>
       <p className="security-note">选择磁盘后会读取文件系统元数据，统计所有可访问文件与文件夹的大小；不会打开或读取文件内容。</p>
-      <div className="report-scroll"><Suspense fallback={<p className="empty">正在整理磁盘数据…</p>}><StorageAnalysis disks={snap.hardware.disks} /></Suspense></div>
+      <div className="report-scroll"><Suspense fallback={<p className="empty">正在整理磁盘数据…</p>}><StorageAnalysis disks={snap.hardware.disks} onActivity={setDogActivity} /></Suspense></div>
     </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>
@@ -718,7 +752,7 @@ export default function App() {
         <button className="modal-close" onClick={closeSettings} aria-label="关闭设置">×</button>
       </header>
       <nav className="settings-tabs" role="tablist" aria-label="设置分类">
-        {([['patrol','巡逻与记录'],['system','后台能力'],['ai','MiniMax AI'],['data','数据管理']] as const).map(([key,label]) => <button key={key} role="tab" aria-selected={settingsTab === key} className={settingsTab === key ? "active" : ""} onClick={() => setSettingsTab(key)}>{label}</button>)}
+        {([['patrol','巡逻与记录'],['companion','陪伴体验'],['system','后台能力'],['ai','MiniMax AI'],['data','数据管理']] as const).map(([key,label]) => <button key={key} role="tab" aria-selected={settingsTab === key} className={settingsTab === key ? "active" : ""} onClick={() => setSettingsTab(key)}>{label}</button>)}
       </nav>
       <div className="settings-content">
         {settingsTab === "patrol" && <section className="settings-section settings-tab-panel">
@@ -728,6 +762,16 @@ export default function App() {
             <label className="setting-field setting-range">内存告警阈值 <output>{settings.memoryThreshold}%</output><input type="range" min="70" max="99" value={settings.memoryThreshold} onChange={e => setSettings({...settings, memoryThreshold: Number(e.target.value)})} /></label>
             <label className="setting-field">普通采样间隔 <select value={settings.samplingSeconds} onChange={e => setSettings({...settings, samplingSeconds: Number(e.target.value)})}><option value="2">2 秒</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
             <label className="setting-field">历史保留天数 <select value={settings.retentionDays} onChange={e => setSettings({...settings, retentionDays: Number(e.target.value)})}><option value="1">1 天</option><option value="7">7 天</option><option value="30">30 天</option><option value="90">90 天</option></select></label>
+          </div>
+        </section>}
+        {settingsTab === "companion" && <section className="settings-section settings-tab-panel">
+          <div className="settings-section-title"><div><h4>陪伴体验</h4><p>调整大黄的回应方式；不会影响巡逻和安全功能。</p></div><span>舒心</span></div>
+          <div className="settings-grid">
+            <label className="setting-field">小狗性格 <select value={settings.companionPersonality} onChange={e => setSettings({...settings, companionPersonality: e.target.value as UserSettings["companionPersonality"]})}><option value="quiet">安静</option><option value="warm">温暖</option><option value="playful">活泼</option></select></label>
+          </div>
+          <div className="settings-toggles companion-settings">
+            <label className="check"><input type="checkbox" checked={settings.companionQuietMode} onChange={e => setSettings({...settings, companionQuietMode: e.target.checked})}/><span><b>安静模式</b><small>不主动显示气泡；点击小狗时仍会回应。</small></span></label>
+            <label className="check"><input type="checkbox" checked={settings.reduceCompanionMotion} onChange={e => setSettings({...settings, reduceCompanionMotion: e.target.checked})}/><span><b>减少动画</b><small>保留状态反馈，停止摇尾巴、呼吸和庆祝动作。</small></span></label>
           </div>
         </section>}
         {settingsTab === "system" && <section className="settings-section settings-tab-panel">

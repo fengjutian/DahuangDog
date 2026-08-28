@@ -170,7 +170,7 @@ export async function exportUsageCsv(content: string): Promise<ActionResult> {
   return invoke("export_usage_csv", { content });
 }
 
-const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false, applicationNetworkMonitoring: false, minimaxEnabled: false, minimaxModel: "MiniMax-M2.7" };
+const demoSettings: UserSettings = { cpuThreshold: 90, memoryThreshold: 90, samplingSeconds: 2, lowPowerMode: false, notificationsEnabled: true, retentionDays: 7, autoStart: false, applicationNetworkMonitoring: false, minimaxEnabled: false, minimaxModel: "MiniMax-M2.7", companionPersonality: "warm", companionQuietMode: false, reduceCompanionMotion: false };
 let demoAiConfigured = false;
 
 export async function getSettings(): Promise<UserSettings> {

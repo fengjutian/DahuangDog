@@ -274,6 +274,9 @@ pub struct UserSettings {
     pub application_network_monitoring: bool,
     pub minimax_enabled: bool,
     pub minimax_model: String,
+    pub companion_personality: String,
+    pub companion_quiet_mode: bool,
+    pub reduce_companion_motion: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -306,6 +309,9 @@ impl Default for UserSettings {
             application_network_monitoring: false,
             minimax_enabled: false,
             minimax_model: "MiniMax-M2.7".into(),
+            companion_personality: "warm".into(),
+            companion_quiet_mode: false,
+            reduce_companion_motion: false,
         }
     }
 }

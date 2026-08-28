@@ -1181,6 +1181,9 @@ impl Monitor {
         if !matches!(settings.minimax_model.as_str(), "MiniMax-M2.7" | "MiniMax-M2.7-highspeed" | "MiniMax-M2.5" | "MiniMax-M2.5-highspeed") {
             return Err("不支持的 MiniMax 模型".into());
         }
+        if !matches!(settings.companion_personality.as_str(), "quiet" | "warm" | "playful") {
+            return Err("不支持的小狗性格".into());
+        }
         if let Some(storage) = &self.storage {
             storage.save_settings(&settings)?;
         }

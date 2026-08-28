@@ -242,6 +242,9 @@ export interface UserSettings {
   applicationNetworkMonitoring: boolean;
   minimaxEnabled: boolean;
   minimaxModel: string;
+  companionPersonality: "quiet" | "warm" | "playful";
+  companionQuietMode: boolean;
+  reduceCompanionMotion: boolean;
 }
 
 export interface AppUsageRecord {
