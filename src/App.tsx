@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import StorageAnalysis from "./StorageAnalysis";
 import { clearLocalMemory, confirmAction, confirmMaintenance, diagnosePerformance, exportUsageCsv, getAlerts, getApplicationHistory, getAppUsageHistory, getAppUsageSummary, getCurrentStatus, getHistoryRange, getPeriodicPatterns, getSecurityReport, getSettings, openFileLocation, openProcessLocation, prepareCleanup, preparePriority, prepareStartupChange, prepareTerminate, saveSettings, scanCleanup, updateAlert } from "./api";
 import type { ActionPreview, AlertRecord, ApplicationGroup, ApplicationHistory, AppUsageRecord, AppUsageSummary, CleanupReport, CurrentStatus, HistorySummary, LocalDiagnosis, MetricPoint, PeriodicPattern, ProcessSample, SecurityReport, StartupEntry, UserSettings } from "./types";
 
@@ -16,6 +15,8 @@ const timelineKindLabel: Record<string, string> = {
   action: "操作",
   resolved: "恢复"
 };
+
+const StorageAnalysis = lazy(() => import("./StorageAnalysis"));
 
 type HistoryMetricKey = "cpuPercent" | "memoryPercent" | "diskBps" | "networkBps";
 
@@ -530,7 +531,7 @@ export default function App() {
     {storageOpen && snap && <div className="modal-backdrop" onClick={() => setStorageOpen(false)}><section className="modal report-modal storage-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时容量分析</span><h3>💾 存储分析</h3></div><button className="modal-close" onClick={() => setStorageOpen(false)} aria-label="关闭存储分析">×</button></div>
       <p className="security-note">显示 Windows 当前挂载的每个磁盘分区。图表会随巡逻采样自动更新，不会扫描或读取文件内容。</p>
-      <div className="report-scroll"><StorageAnalysis disks={snap.hardware.disks} /></div>
+      <div className="report-scroll"><Suspense fallback={<p className="empty">正在整理磁盘数据…</p>}><StorageAnalysis disks={snap.hardware.disks} /></Suspense></div>
     </section></div>}
     {hardwareOpen && snap && <div className="modal-backdrop" onClick={() => setHardwareOpen(false)}><section className="modal report-modal hardware-report" onClick={event => event.stopPropagation()}>
       <div className="section-title"><div><span className="eyebrow">实时设备指标</span><h3>🖥️ 硬件监控</h3></div><button className="modal-close" onClick={() => setHardwareOpen(false)} aria-label="关闭硬件监控">×</button></div>
