@@ -11,14 +11,62 @@
   letter-spacing: -0.02em;
 }
 
-.brand-mark {
-  align-items: center;
-  background: linear-gradient(135deg, #facc15, #ca8a04);
+.brand-icon {
   border-radius: 0.55rem;
-  color: #422006;
-  display: inline-flex;
-  font-size: 0.75rem;
-  height: 1.75rem;
-  justify-content: center;
-  width: 1.75rem;
+  height: 2rem;
+  object-fit: contain;
+  width: 2rem;
+}
+
+.download-link {
+  background: #ca8a04;
+  border-radius: 0.6rem;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.5rem 0.8rem;
+  text-decoration: none;
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+
+.download-link:hover {
+  background: #a16207;
+  transform: translateY(-1px);
+}
+
+.download-card {
+  align-items: center;
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.16), rgba(202, 138, 4, 0.08));
+  border: 1px solid rgba(202, 138, 4, 0.28);
+  border-radius: 1rem;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin: 1.75rem 0 2.25rem;
+  padding: 1.1rem 1.25rem;
+}
+
+.download-card p {
+  margin: 0.2rem 0 0;
+}
+
+.download-button {
+  background: #ca8a04;
+  border-radius: 0.65rem;
+  color: #fff !important;
+  flex-shrink: 0;
+  font-weight: 650;
+  padding: 0.65rem 1rem;
+  text-decoration: none !important;
+}
+
+@media (max-width: 640px) {
+  .download-link {
+    display: none;
+  }
+
+  .download-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
