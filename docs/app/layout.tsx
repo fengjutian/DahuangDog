@@ -19,7 +19,9 @@ const footer = <Footer>大黄狗 · 本地优先的 Windows 系统健康助手</
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" dir="ltr" suppressHydrationWarning>
-      <Head />
+      <Head>
+        <meta name="theme-color" content="#ca8a04" />
+      </Head>
       <body>
         <Layout
           navbar={navbar}
