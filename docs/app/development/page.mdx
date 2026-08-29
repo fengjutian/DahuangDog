@@ -1,0 +1,24 @@
+---
+title: 开发指南
+---
+
+# 开发指南
+
+仓库由 Vite/React 前端和 Tauri/Rust 后端组成，静态文档站位于独立的 `docs/` 目录。
+
+## 常用命令
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm run dev` | 启动桌面应用的前端预览 |
+| `npm run build` | 执行 TypeScript 检查并构建前端 |
+| `npm run tauri:dev` | 启动 Tauri 开发模式 |
+| `npm run docs:dev` | 启动文档站开发服务器 |
+| `npm run docs:build` | 静态导出文档站 |
+
+首次运行文档站前需要安装其独立依赖：
+
+```powershell
+npm install --prefix docs
+npm run docs:dev
+```

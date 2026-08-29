@@ -1,5 +1,8 @@
 node_modules/
 dist/
+docs/.next/
+docs/out/
+docs/node_modules/
 target/
 src-tauri/target/
 src-tauri/target-codex/

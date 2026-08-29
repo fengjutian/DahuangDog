@@ -1,0 +1,24 @@
+:root {
+  --x-color-primary-600: 202 138 4;
+  --x-color-primary-500: 234 179 8;
+}
+
+.brand {
+  align-items: center;
+  display: inline-flex;
+  font-weight: 700;
+  gap: 0.55rem;
+  letter-spacing: -0.02em;
+}
+
+.brand-mark {
+  align-items: center;
+  background: linear-gradient(135deg, #facc15, #ca8a04);
+  border-radius: 0.55rem;
+  color: #422006;
+  display: inline-flex;
+  font-size: 0.75rem;
+  height: 1.75rem;
+  justify-content: center;
+  width: 1.75rem;
+}

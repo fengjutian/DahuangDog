@@ -1,0 +1,27 @@
+---
+title: 部署文档站
+---
+
+# 部署文档站
+
+文档站采用 Next.js 静态导出，构建产物位于 `docs/out`，不依赖常驻 Node.js 服务。
+
+## Netlify
+
+仓库根目录的 `netlify.toml` 已配置：
+
+- Base directory：`docs`
+- Build command：`npm run build`
+- Publish directory：`out`
+- Node.js：20
+
+将仓库关联到 Netlify 后即可部署。每次推送都会重新构建静态页面。
+
+## 本地验证
+
+```powershell
+npm install --prefix docs
+npm run docs:build
+```
+
+构建成功后，上传 `docs/out` 目录也可以完成手动部署。
