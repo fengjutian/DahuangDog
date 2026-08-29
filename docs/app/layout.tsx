@@ -26,7 +26,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         <Layout
           navbar={navbar}
           pageMap={await getPageMap()}
+          docsRepositoryBase="https://github.com/fengjutian/DahuangDog/tree/main/docs"
           footer={footer}
+          editLink="在 GitHub 上编辑此页"
+          feedback={{ content: '有问题？提交反馈' }}
           sidebar={{ defaultMenuCollapseLevel: 1 }}
           toc={{ title: '本页内容' }}
         >
